@@ -1,0 +1,31 @@
+# 密钥与本机配置（一律不入库）
+.env
+.env.local
+*.pem
+*.key
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# 数据库与用户上传（评审跑 seed_data.py 会重新生成）
+data/*.db
+data/*.db-journal
+data/*.sqlite3
+assets/uploads/*
+!assets/uploads/.gitkeep
+
+# IDE 与系统垃圾
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+
+# 日志与临时文件
+*.log
+tmp/
+.commit-msg.txt

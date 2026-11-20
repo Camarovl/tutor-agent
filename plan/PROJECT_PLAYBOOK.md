@@ -160,9 +160,9 @@ clone → 分支 → commit → push 练习。
 |---|---|---|
 | A + E | 建本代码仓库并初始化骨架、加 3 名协作者 | 后台显示 3 条邀请已发出 |
 | A | 群里接龙投票定学科 | 已定：高等数学 |
-| 全员 | 申请模型 API Key，填进本地 `.env`（复制 `.env.example`） | 🔑 能跑通一次对话请求 |
-| 全员 | clone 代码仓库，跑 `pip install -r requirements.txt` | 四个包都装上 |
-| 全员 | 跑 `python tests/offline_check.py` | 有输出（此时可能全红，正常） |
+| 全员 | 申请模型 API Key，填进本地 `.env`（复制 `.env.example`） | 密钥已保存，且确认 `.env` 被 git 忽略 |
+| 全员 | clone 代码仓库，建虚拟环境并 `pip install -r requirements.txt` | 四个包都能 import |
+| 全员 | 建自己的分支，改一行、commit、push | 终端给出创建 PR 的链接（**不用点**） |
 | A | 催没接受邀请的人去 notifications 点 Accept（**7 天过期**） | 3 人都是 Write 状态 |
 
 ⚠️ 三条最容易翻车的（git-test 里也讲过，这里只强调结论）：
@@ -171,7 +171,11 @@ clone → 分支 → commit → push 练习。
 - 浏览器能打开 GitHub ≠ 命令行能推上去，代理软件必须一直开着
 - 卡住超过 90 分钟必须在群里求助，贴报错原文而不是自己的转述
 
-**验收**：五人头像都在 Contributors；每人本机 `streamlit run streamlit_app.py` 能起页面。
+**验收**：全员头像都在 Contributors；每人本机能跑通
+`python -c "import streamlit, pandas, openai, dotenv"` 且无报错。
+
+⚠️ 此时还起不了页面 —— `streamlit_app.py` 是第 4 步 D 的第一件产出。
+第 1~3 步的目标是**环境和通道就绪**，不是跑起来。
 
 ### 第 4 步 · 数据结构与接口
 
@@ -331,9 +335,11 @@ C 的真函数还没写好。请在 app/stubs.py 里造一个假的 mastery_tabl
 2. 读 docs/interfaces.md，告诉我这次要做的那部分需要调用哪些函数、吃什么吐什么
 3. 打开那些函数的源码，用大白话逐段解释
 4. 跑 tests/offline_check.py，把结果贴给我
+   （如果这个文件还不存在，直接说「尚未创建，跳过」）
 ```
 
 第 4 步很关键 —— **自检红了说明 main 是坏的**，先报告别硬写。
+脚本由 C₂ 在第 5 步创建，之前跳过这一步即可。
 
 **收工**：
 

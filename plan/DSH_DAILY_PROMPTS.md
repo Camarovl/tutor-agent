@@ -99,9 +99,10 @@
    🔴 不要装到全局 Python，否则五个人版本会各自漂移
 3. 复制 .env.example 为 .env，把三项必填留空给我自己填
    （LLM_BASE_URL / LLM_API_KEY / LLM_MODEL）—— 🔴 .env 已被 gitignore 排除，别提交
-4. 跑一次离线自检并把结果原样贴给我：
-   python tests/offline_check.py
-   ⚠️ 现在功能代码还没写，全红是正常的；如果脚本本身报错退出，那才是要修的问题
+4. 验证依赖装对了：
+   python -c "import streamlit, pandas, openai, dotenv; print('ok')"
+   ⚠️ 不要去找 tests/offline_check.py —— 那个脚本还没写，第 5 步才由 C₂ 创建。
+      现在只要四个包能导入、.env 能读到就行。
 
 最后告诉我：README 第三节「环境搭建与启动」的步骤，有没有哪一步在你机器上跑不通？
 跑不通的地方就是要改文档的地方。
@@ -898,8 +899,10 @@ make_intake_validator(allowed_kp_ids) 返回一个函数，输入解析后的 di
 2. 读 docs/interfaces.md，告诉我这次要做的那部分需要调用哪些函数、吃什么吐什么
 3. 打开那些函数的源码，用大白话逐段解释
 4. 跑 tests/offline_check.py，把结果贴给我
+   （文件还不存在就跳过并说明）
 
 第 4 步如果红了说明主干是坏的，先报告给我，不要硬写新功能。
+该脚本由 C₂ 在第 5 步创建；在那之前跳过这一步。
 ```
 
 ### 收工

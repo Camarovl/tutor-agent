@@ -33,6 +33,22 @@ AGENTS.md                          🤖 组员的 AI 自动读取的规则文件
 
 ⚠️ `plan/` 是过程资料，交付前可整体删除；其余都是评分对象。
 
+### 当前开发进度
+
+仓库已具备开工条件，但**业务代码尚未开始写** —— 那是各人从第 4 步起各自的工作。
+
+| 部分 | 状态 |
+|---|---|
+| 目录骨架、依赖、忽略规则、Dockerfile | ✅ 就位 |
+| 15 个归类抽屉 `data/chapters.json` | ✅ 就位 |
+| 函数契约 `docs/interfaces.md` | ✅ 九节骨架就位，`[TODO]` 由各维护人补 |
+| `app/` 下九个模块 | ⏳ 待第 4 步按分工创建 |
+| `schema.sql`、`streamlit_app.py`、`seed_data.py` | ⏳ 待第 4~5 步 |
+| `tests/offline_check.py` | ⏳ 待第 5 步由 C₂ 创建 |
+
+所以照第三节执行时，**现在只有前两步能跑通**（装依赖、配 `.env`）；
+第 3~5 步要等对应文件被创建出来，那正是第 4 步要做的第一件事。
+
 ---
 
 ## 一、项目说明
@@ -145,7 +161,7 @@ $env:LLM_MODEL="deepseek-chat"
 
 🔴 `.env` 已被 `.gitignore` 排除，**切勿提交真实密钥**。
 
-### 3. 初始化演示数据
+### 3. 初始化演示数据 ⏳ 待第 5 步
 
 ```bash
 python seed_data.py
@@ -153,7 +169,9 @@ python seed_data.py
 
 输出各类数据条数和当前最薄弱的三个知识点。脚本可重复运行。
 
-### 4. 启动
+⏳ 脚本由 D 在第 5 步创建。在那之前这一步会报「找不到文件」，属正常。
+
+### 4. 启动 ⏳ 待第 4 步
 
 ```bash
 streamlit run streamlit_app.py
@@ -161,7 +179,9 @@ streamlit run streamlit_app.py
 
 浏览器打开 http://localhost:8501 。
 
-### 5. 离线自检（不需要模型服务）
+⏳ 入口文件由 D 在第 4 步创建（先做四个标签页的空壳）。
+
+### 5. 离线自检（不需要模型服务）⏳ 待第 5 步
 
 ```bash
 python tests/offline_check.py
@@ -169,6 +189,8 @@ python tests/offline_check.py
 
 覆盖数据完整性、掌握度查询边界、输出校验器、判分逻辑。
 🔴 每天开工先跑一次 —— 红了说明主干是坏的，先报告别硬写。
+
+⏳ 脚本由 C₂ 在第 5 步创建；在那之前仓库里还没有它。
 
 ---
 
@@ -199,7 +221,9 @@ docker exec tutor python seed_data.py
 | 环境变量 | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` 用 `-e` 传入，镜像内不含任何密钥 |
 | 首次进入容器 | 需执行一次 `python seed_data.py` 建库灌数据 |
 
-⚠️ Dockerfile 尚未经实机验证时会在此明确标注。
+⚠️ **Dockerfile 尚未经过实机构建验证**（开发环境没有安装 Docker）。
+首次在装了 Docker 的机器上 `docker build` 时请记录报错并修正，这条已列入
+[docs/limitations.md](docs/limitations.md) 的待补项。
 
 ---
 
@@ -216,7 +240,7 @@ docker exec tutor python seed_data.py
 | V7 | `python tests/offline_check.py` | 全部通过，退出码 0 |
 | V8 | `docker run` 后浏览器打开 8501 | 完整可用 |
 
-状态：待功能完成后逐项打勾。
+状态：V1~V6、V8 待对应功能完成后逐项验证；V7 的自检脚本在第 5 步创建后才可运行。
 
 ---
 
@@ -225,13 +249,14 @@ docker exec tutor python seed_data.py
 | 代号 | 职责 | 主要负责文件 |
 |---|---|---|
 | **A 组长** | 定范围、催进度、拍板砍功能、创建 PR 与合并、项目汇报主讲 | `docs/`、`README.md` |
-| **E** | 依赖版本、忽略规则、Docker、部署上线、汇报材料排版 | `Dockerfile`、`requirements.txt`、`.gitignore`、`.dockerignore`、`.env.example` |
-
-💡 本项目 A 与 E 由同一人承担。职责仍按两个角色分开列，是为了看清哪些属于配置类工作 —— 提交时也请分成两条 commit（一条 `docs:`、一条 `chore:`）。
 | **B** | 模型调用封装、提示词设计与调优、抽取与问答逻辑 | `app/llm_client.py`、`prompts.py`、`qa.py`、`intake.py` |
 | **C₁** 🔴先动 | 数据地基：表结构、连接管理、章节灌入、知识点动态挂载与查重 | `schema.sql`、`db.py`、`knowledge.py`、`data/chapters.json` |
 | **C₂** | 统计与判定：输出校验器、掌握度估计、出题选池、判分回写、离线自检脚本 | `app/schemas.py`、`profile.py`、`tests/offline_check.py` |
 | **D** | 界面交互、桩函数体系、演示数据 | `streamlit_app.py`、`stubs.py`、`seed_data.py`、`data/question_bank.json` |
+| **E** | 依赖版本、忽略规则、Docker、部署上线、汇报材料排版 | `Dockerfile`、`requirements.txt`、`.gitignore`、`.dockerignore`、`.env.example` |
+
+💡 本项目 **A 与 E 由同一人承担**。职责仍按两个角色分开列，是为了看清哪些属于配置类工作 ——
+提交时也请分成两条 commit（一条 `docs:`、一条 `chore:`）。
 
 协作规矩见 [docs/collaboration.md](docs/collaboration.md)，
 跨人同步依据是 [docs/interfaces.md](docs/interfaces.md)（函数契约）。

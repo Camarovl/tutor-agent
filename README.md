@@ -8,8 +8,8 @@
 ## 📍 新组员从这里开始
 
 ```bash
-git clone https://github.com/Camarovl/gduf-tutor.git
-cd gduf-tutor
+git clone https://github.com/Camarovl/tutor-agent.git
+cd tutor-agent
 ```
 
 然后按顺序读三份东西：
@@ -198,19 +198,19 @@ python tests/offline_check.py
 
 ```powershell
 # PowerShell
-docker build -t gduf-tutor .
+docker build -t tutor-agent .
 docker run -d -p 8501:8501 -e LLM_BASE_URL="https://..." `
            -e LLM_API_KEY="sk-..." -e LLM_MODEL=xxx `
-           -v "${PWD}\data:/app/data" --name tutor gduf-tutor
+           -v "${PWD}\data:/app/data" --name tutor tutor-agent
 docker exec tutor python seed_data.py
 ```
 
 ```bash
 # Linux / macOS
-docker build -t gduf-tutor .
+docker build -t tutor-agent .
 docker run -d -p 8501:8501 -e LLM_BASE_URL="https://..." \
            -e LLM_API_KEY="sk-..." -e LLM_MODEL=xxx \
-           -v "$(pwd)/data:/app/data" --name tutor gduf-tutor
+           -v "$(pwd)/data:/app/data" --name tutor tutor-agent
 docker exec tutor python seed_data.py
 ```
 

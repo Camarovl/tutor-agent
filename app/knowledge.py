@@ -127,28 +127,15 @@ def chapter_candidates() -> list[dict]:
 
     🔴 这是 AI 唯一允许挂靠的层级 —— 禁止发明新章节。
     """
-    with db._tx() as conn:
-        rows = conn.execute(
-            "SELECT id, name, brief FROM chapter ORDER BY rowid"
-        ).fetchall()
-    return [dict(r) for r in rows]
+    return db.chapter_rows()
 
 
 def all_knowledge_points() -> list[dict]:
-    """返回现有全部知识点（id / name / chapter_id），供提示词注入候选列表。
+    """返回现有全部知识点（id / name / chapter_id / chapter_name），供提示词注入候选列表。
 
     顺序：按章节，再按名字，保证提示词内容稳定、可复现。
     """
-    with db._tx() as conn:
-        rows = conn.execute(
-            """
-            SELECT kp.id, kp.name, kp.chapter_id, c.name AS chapter_name
-            FROM knowledge_point kp
-            JOIN chapter c ON c.id = kp.chapter_id
-            ORDER BY kp.chapter_id, kp.name
-            """
-        ).fetchall()
-    return [dict(r) for r in rows]
+    return db.list_kps_with_chapter()
 
 
 def ensure_valid_chapter(chapter_id: str) -> bool:
@@ -159,11 +146,7 @@ def ensure_valid_chapter(chapter_id: str) -> bool:
     """
     if not chapter_id:
         return False
-    with db._tx() as conn:
-        row = conn.execute(
-            "SELECT 1 FROM chapter WHERE id = ?", (chapter_id,)
-        ).fetchone()
-    return row is not None
+    return db.chapter_exists(chapter_id)
 
 
 # ============================================================
@@ -203,42 +186,24 @@ def find_or_create(
 
     # ① 精确匹配：一模一样名字直接命中，省掉后面全表比较
     target_core = _core(name)
-    with db._tx() as conn:
-        row = conn.execute(
-            "SELECT id, name FROM knowledge_point WHERE name = ?", (name,)
-        ).fetchone()
-        if row is not None:
-            return row["id"]
+    hit = db.find_kp_by_name(name)
+    if hit is not None:
+        return hit["id"]
 
-        # ② 相似度匹配：知识点表不大，全表拉出来比即可
-        existing = conn.execute(
-            "SELECT id, name FROM knowledge_point"
-        ).fetchall()
-
-    for r in existing:
+    # ② 相似度匹配：知识点表不大，全量拉出来比即可
+    for r in db.list_kps():
         if _core(r["name"]) == target_core or _is_same_concept(name, r["name"]):
             return r["id"]
 
     # ④ 都没命中 → 新建
     new_id = _make_kp_id(name)
     try:
-        with db._tx() as conn:
-            conn.execute(
-                """
-                INSERT INTO knowledge_point (id, name, chapter_id, explain, created_from)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (new_id, name, chapter_id, context, "intake"),
-            )
+        db.insert_kp(new_id, name, chapter_id, context, "intake")
         return new_id
     except sqlite3.IntegrityError:
         # id 或 name 撞了：说明刚好有人并发建了同名的，直接复用它的 id。
         # 这是可预期的竞争，不算错误。
-        with db._tx() as conn:
-            row = conn.execute(
-                "SELECT id FROM knowledge_point WHERE id = ? OR name = ?",
-                (new_id, name),
-            ).fetchone()
+        row = db.find_kp_by_id_or_name(new_id, name)
         if row is not None:
             return row["id"]
         raise

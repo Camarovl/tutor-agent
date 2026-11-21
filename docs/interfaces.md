@@ -11,7 +11,14 @@
 
 ---
 
-## 一、数据层 — `app/db.py`　维护人：C
+## 一、数据层 — `app/db.py`　维护人：C₁
+
+🔴 **本文件之外不许写 SQL。** 其他模块要数据一律调用这里的函数；
+`_tx()` 是 db.py 内部的事务封装，保持私有，不要跨模块使用。
+
+本节函数的实现都归 C₁。唯一例外是 `mastery_table()`：
+**行覆盖范围与返回列名由 C₁ 定死，实现放在第七节的 `profile.py`（C₂）** ——
+因为它属于统计逻辑，C₁ 只提供 `practice_log` 的底层查询。
 
 | 函数 | 说明 |
 |---|---|
@@ -72,7 +79,7 @@ C₂ 和 D 都依赖这一行，**改列名等于改接口**，必须按文件�
 
 ---
 
-## 二、知识点挂载 — `app/knowledge.py`　维护人：C
+## 二、知识点挂载 — `app/knowledge.py`　维护人：C₁
 
 🔴 **这是整个"知识库从错题里长出来"设计的支点。**
 
@@ -164,7 +171,7 @@ confidence / source / degraded / note`
 
 ---
 
-## 六、校验器 — `app/schemas.py`　维护人：C
+## 六、校验器 — `app/schemas.py`　维护人：C₂
 
 | 函数 | 说明 |
 |---|---|
@@ -177,11 +184,11 @@ confidence / source / degraded / note`
 
 ---
 
-## 七、掌握度与练习 — `app/profile.py`　维护人：C
+## 七、掌握度与练习 — `app/profile.py`　维护人：C₂
 
 | 函数 | 说明 |
 |---|---|
-| `mastery_table() -> DataFrame` | 掌握度 = 基础正确率 × 难度加权 × 时间衰减 |
+| `mastery_table() -> DataFrame` | 🔴 **实现归 C₂**。掌握度 = 基础正确率 × 难度加权 × 时间衰减；行覆盖范围与返回列名由 C₁ 在第一/五步定死，改动列名等于改接口 |
 | `summary_text() -> dict` | 界面顶部指标卡数据 |
 | `build_practice_session(count) -> (list[dict], str)` | 返回题目列表 + 来源说明 |
 | `grade(item, user_answer) -> bool` | 客观判分 |
@@ -231,7 +238,7 @@ confidence / source / degraded / note`
 在本节下方维护一张清单，标注哪些还是桩：
 
 ```
-[ ] mastery_table()      待 C 实现
+[ ] mastery_table()      待 C₂ 实现
 [ ] answer()             待 B 实现
 [ ] analyze_text()       待 B 实现
 ```

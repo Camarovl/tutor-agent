@@ -29,7 +29,7 @@
 | `recent_wrong_questions(limit=20) -> list[dict]` | 最近录入的错题 |
 | `wrong_question_count() -> int` | 错题总数 |
 | `log_practice(kp_id, is_correct, question_ref=None, difficulty=None, duration_sec=None)` | 写练习记录 |
-| `mastery_table() -> pandas.DataFrame` | 列：`[TODO]` |
+| `mastery_table() -> pandas.DataFrame` | 🔴 **列名已定死，见下方「mastery_table 返回列」** |
 | `weak_points(n) -> list[dict]` | 排除样本不足后掌握度最低的 n 个 |
 | `kp_error_distribution() -> list[dict]` | 错题按知识点分布 + 主要错因 |
 | `cost_summary() -> dict` | 累计调用次数与 token 用量 |
@@ -49,6 +49,33 @@ practice_log(id PK, kp_id FK, question_ref, is_correct, difficulty,
 llm_log(id PK, purpose, prompt_tokens, completion_tokens, retried,
         success, created_at)
 ```
+
+### 🔴 `mastery_table()` 返回列（C₁ 在第 5 步定死，实现归 C₂）
+
+C₂ 和 D 都依赖这一行，**改列名等于改接口**，必须按文件头的规矩同步本文件并单独提交一条 `docs:`。
+
+| # | 列名 | 类型 | 含义 |
+|---|---|---|---|
+| 1 | `kp_id` | str | 知识点 id（`kp_` 开头） |
+| 2 | `kp_name` | str | 知识点名称，如「洛必达法则」 |
+| 3 | `chapter_id` | str | 所属章节 id（`ch_` 开头） |
+| 4 | `chapter_name` | str | 章节中文名，界面直接展示用 |
+| 5 | `attempts` | int | 练习总次数（`practice_log` 行数） |
+| 6 | `correct` | int | 答对次数 |
+| 7 | `correct_rate` | float | 基础正确率 = `correct / attempts`，0~1 |
+| 8 | `difficulty_factor` | float | 难度加权系数：全易题 1.0 / 含中等 1.05 / 含难题 1.15 |
+| 9 | `decay_factor` | float | 时间衰减系数：≤7 天 1.0 / 8~30 天 0.9 / >30 天 0.75 |
+| 10 | `mastery` | float | 🔴 最终掌握度 = 第 7 列 × 第 8 列 × 第 9 列，**截断到 1.0** |
+| 11 | `status` | str | 分级标签：`未掌握` / `基本掌握` / `已掌握` / `样本不足` |
+
+约定：
+
+- **行覆盖范围**：库里**全部**知识点都要出现，包括从没练过的（`attempts = 0`）。
+  没练过的行第 7~10 列取 `0.0`，`status` 固定为 `样本不足` —— 否则界面上的表会缺行。
+- **列顺序固定**为上表 1~11，D 可以直接按位置渲染。
+- `status` 的取值是**中文标签**，与本文件第七节分级阈值表一一对应；
+  C₂ 实现时按 `练过 ≥3 次` 的前置条件判定，不满足的一律 `样本不足`。
+- `mastery` 的截断在最后一步做（先乘再截断），不是把 `difficulty_factor` 自己封顶。
 
 ---
 

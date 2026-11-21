@@ -220,3 +220,101 @@ def log_practice(
             """,
             (kp_id, question_ref, 1 if is_correct else 0, difficulty, duration_sec),
         )
+
+
+# ============================================================
+# 章节 / 知识点的细粒度访问
+#
+# 🔴 这一组是给 app/knowledge.py 用的：那里只做业务判断，
+#    SQL 一律收口到这里。事务边界也留在这里，_tx 不出本文件。
+# ============================================================
+def chapter_rows() -> list[dict]:
+    """全部章节（id / name / brief），按灌入顺序。
+
+    供 knowledge.chapter_candidates() 使用 —— AI 唯一允许挂靠的层级。
+    """
+    with _tx() as conn:
+        rows = conn.execute(
+            "SELECT id, name, brief FROM chapter ORDER BY rowid"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def chapter_exists(chapter_id: str) -> bool:
+    """章节 id 是否存在于 chapter 表。"""
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM chapter WHERE id = ?", (chapter_id,)
+        ).fetchone()
+    return row is not None
+
+
+def find_kp_by_name(name: str) -> dict | None:
+    """按名字精确查知识点，查不到返回 None。"""
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT id, name FROM knowledge_point WHERE name = ?", (name,)
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def list_kps() -> list[dict]:
+    """全部知识点（id / name）。查重时逐条比对用。"""
+    with _tx() as conn:
+        rows = conn.execute(
+            "SELECT id, name FROM knowledge_point"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_kps_with_chapter() -> list[dict]:
+    """全部知识点，附带所属章节中文名（id / name / chapter_id / chapter_name）。
+
+    供 knowledge.all_knowledge_points() 使用，注入提示词当候选列表。
+    顺序按章节再按名字，保证提示词内容稳定可复现。
+    """
+    with _tx() as conn:
+        rows = conn.execute(
+            """
+            SELECT kp.id, kp.name, kp.chapter_id, c.name AS chapter_name
+            FROM knowledge_point kp
+            JOIN chapter c ON c.id = kp.chapter_id
+            ORDER BY kp.chapter_id, kp.name
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_kp(
+    kp_id: str,
+    name: str,
+    chapter_id: str,
+    explain: str | None,
+    created_from: str,
+) -> None:
+    """新建一个知识点。
+
+    🔴 外键保证 chapter_id 必须是已存在的章节；撞 id 或 name 会抛
+    sqlite3.IntegrityError，由调用方决定怎么处理（并发复用属于正常情况）。
+    """
+    with _tx() as conn:
+        conn.execute(
+            """
+            INSERT INTO knowledge_point (id, name, chapter_id, explain, created_from)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (kp_id, name, chapter_id, explain, created_from),
+        )
+
+
+def find_kp_by_id_or_name(kp_id: str, name: str) -> dict | None:
+    """按 id 或名字查知识点，查不到返回 None。
+
+    insert 撞唯一约束后用来把「刚好被并发建出来的那条」捞回来。
+    """
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT id FROM knowledge_point WHERE id = ? OR name = ?",
+            (kp_id, name),
+        ).fetchone()
+    return dict(row) if row is not None else None

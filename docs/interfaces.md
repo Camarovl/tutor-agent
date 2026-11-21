@@ -188,11 +188,66 @@ confidence / source / degraded / note`
 
 | 函数 | 说明 |
 |---|---|
-| `mastery_table() -> DataFrame` | 🔴 **实现归 C₂**。掌握度 = 基础正确率 × 难度加权 × 时间衰减；行覆盖范围与返回列名由 C₁ 在第一/五步定死，改动列名等于改接口 |
-| `summary_text() -> dict` | 界面顶部指标卡数据 |
-| `build_practice_session(count) -> (list[dict], str)` | 返回题目列表 + 来源说明 |
-| `grade(item, user_answer) -> bool` | 客观判分 |
-| `record_result(items, answers) -> list[bool]` | 判分 + 回写 + 错题回流 |
+| `mastery_table() -> DataFrame` | 🔴 **实现归 C₂**。掌握度 = 基础正确率 × 难度加权 × 时间衰减；行覆盖范围与返回列名由 C₁ 定死（见第一节），改动列名等于改接口 |
+| `summary_text() -> dict` | 界面顶部指标卡数据，键名见下方「summary_text 返回」 |
+| `build_practice_session(count) -> (list[dict], str)` | 返回题目列表 + 来源说明（如「本次来自薄弱知识点」） |
+| `grade(item, user_answer) -> bool` | 客观判分，规则见下方「题目结构与判分」 |
+| `record_result(items, answers) -> list[bool]` | 判分 + 回写 + 错题回流；返回每题是否答对 |
+
+### 🔴 `summary_text()` 返回（界面顶部指标卡，D 直接按这些键读）
+
+| 键 | 类型 | 含义 |
+|---|---|---|
+| `kp_total` | int | 知识点总数（含从没练过的） |
+| `wrong_total` | int | 错题总数 |
+| `practice_total` | int | 练习总次数 |
+| `weak_count` | int | 判定为「未掌握」的知识点个数 |
+| `llm_calls` | int | 模型调用累计次数 |
+| `llm_tokens` | int | 累计 token 用量 |
+
+键名固定，增删键要同步本文件 —— D 的界面直接按下标读这几个键。
+
+### 🔴 题目结构（`build_practice_session` 产出 / `question_bank.json` 存储 / `grade` 消费）
+
+三方共用同一个形状，**任何一方私自加字段之前先改这一节**。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | str | 题目唯一标识，`qp_` 前缀 |
+| `type` | str | `choice` 单选 / `fill` 填空。**v1 只做这两种**，不做多选和判断 |
+| `chapter_id` | str | 归属章节，必须是 15 个之一 |
+| `kp_ids` | list[str] | 考察的 1~3 个知识点 id |
+| `stem` | str | 题干，markdown |
+| `options` | dict[str, str] | `choice` 必填，如 `{"A":"…","B":"…","C":"…","D":"…"}`；`fill` 为空 dict |
+| `answer` | str | `choice` 存选项编号（`"B"`）；`fill` 存标准答案文本 |
+| `explanation` | str | 解析，作答后展示 |
+| `difficulty` | str | `easy` / `medium` / `hard` |
+
+示例：
+
+```json
+{
+  "id": "qp_0001",
+  "type": "choice",
+  "chapter_id": "ch_mean_value",
+  "kp_ids": ["kp_洛必达法则"],
+  "stem": "求极限 $\\lim_{x\\to 0}\\frac{\\sin 3x}{x}$",
+  "options": {"A": "0", "B": "1", "C": "3", "D": "不存在"},
+  "answer": "C",
+  "explanation": "等价无穷小：sin3x ~ 3x，故极限为 3。",
+  "difficulty": "easy"
+}
+```
+
+### `grade()` 判分规则
+
+| 题型 | 规则 |
+|---|---|
+| `choice` | 与 `answer` 比对选项编号，**大小写与首尾空格宽容**（`"b"` 视为 `"B"`） |
+| `fill` | 去掉所有空格后比对；等价写法（如 `1/2` 与 `0.5`）由 C₂ 自行决定是否支持，支持则写进本节 |
+| 其他 | v1 不支持，遇到未知 `type` 直接返回 `False` 并记一条警告日志 |
+
+判分必须是**纯函数**：同一个 `(item, user_answer)` 反复调用结果一致，不访问网络、不读写数据库。
 
 系数（写在 SQL 里，确定性可调）：
 

@@ -69,19 +69,19 @@ body{
   -webkit-font-smoothing: antialiased;
 }
 body::before{
-  content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+  content:""; position:fixed; inset:0; z-index:-1; pointer-events:none;
   background-image:
     repeating-linear-gradient(0deg, rgba(20,20,20,.045) 0 1px, transparent 1px 28px),
     repeating-linear-gradient(90deg, rgba(20,20,20,.045) 0 1px, transparent 1px 28px);
 }
 body::after{
-  content:""; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.05;
+  content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; opacity:.05;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
   mix-blend-mode:multiply;
 }
 
 /* ---------- App 透明化 ---------- */
-.stApp{ background: transparent !important; position:relative; z-index:2; }
+.stApp{ background: transparent !important; }
 [data-testid="stAppViewContainer"]{ background: transparent !important; }
 [data-testid="stHeader"]{ background: transparent !important; height:0; }
 #MainMenu, footer{ visibility:hidden; }
@@ -332,24 +332,6 @@ input::placeholder, textarea::placeholder{ color:#8C8477 !important; }
   border-radius:3px;
 }
 
-/* ---------- 轻微进场（420ms，可降级） ---------- */
-@keyframes paper-in{
-  from{ opacity:0; transform: translateY(8px); }
-  to{ opacity:1; transform: translateY(0); }
-}
-[data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] > div{
-  animation: paper-in 420ms cubic-bezier(.22,1,.36,1) both;
-}
-[data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] > div:nth-child(2){ animation-delay:60ms; }
-[data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] > div:nth-child(3){ animation-delay:120ms; }
-[data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] > div:nth-child(n+4){ animation-delay:180ms; }
-
-@media (prefers-reduced-motion: reduce){
-  [data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] > div{
-    animation: none !important;
-  }
-  *{ transition-duration:1ms !important; }
-}
 """
 
 

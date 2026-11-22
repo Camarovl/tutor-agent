@@ -162,6 +162,22 @@ def _hero() -> None:
                 st.latex(formula)
 
 
+def _facade_state() -> tuple[dict[str, str], dict[str, str], str, str]:
+    """读门面状态，返回 (逐函数状态, 异常项, 一行汇总, 读取失败原因)。
+
+    导入期异常（语法错误、模块顶层就抛错）会让 `sources()` 直接抛出来，
+    那不是「接不上」而是「读不出来」——在这里兜住并显示红字，
+    否则整页会变成 traceback。真正该改的还是 `_real()` 的异常口径（归 D 但需拍板）。
+    """
+    try:
+        status = backend.sources()
+        bad = backend.problems()
+        ratio = backend.summary()
+    except Exception as exc:  # noqa: BLE001 —— 界面兜底，别让导入期异常把页面打白
+        return {}, {}, "", f"{type(exc).__name__}: {exc}"
+    return status, bad, ratio, ""
+
+
 def _status_strip() -> None:
     """一行系统状态 + 门面接入详情 —— 让「门面到底接到了什么」看得见。
 
@@ -176,14 +192,19 @@ def _status_strip() -> None:
     except Exception:  # noqa: BLE001
         chapters = kps = wrong = 0
 
-    status = backend.sources()
-    bad = backend.problems()
+    status, bad, ratio, read_error = _facade_state()
+    if read_error:
+        st.error(
+            "**门面状态读不出来**：" + read_error
+            + "\n\n这通常意味着某个模块在导入时就抛了非 ImportError 的异常（例如语法错误）。"
+        )
+        return
 
     bits = [
         f"◈ 章节 **{chapters}**",
         f"◈ 知识点 **{kps}**",
         f"◈ 错题 **{wrong}**",
-        f"◈ 接入 **{backend.summary()}**",
+        f"◈ 接入 **{ratio}**",
         f"◈ 风格 **{st.session_state.style}**",
     ]
     if bad:
@@ -204,7 +225,7 @@ def _status_strip() -> None:
                     {
                         "函数": name,
                         "当前": "✅ 真实现" if kind == "real" else "🧪 桩",
-                        "归谁实现": owners.get(name, "—"),
+                        "实现模块": owners.get(name, "—"),
                         "异常原因": bad.get(name, ""),
                     }
                     for name, kind in status.items()
@@ -214,7 +235,7 @@ def _status_strip() -> None:
             column_config={
                 "函数": st.column_config.TextColumn("函数", width="medium"),
                 "当前": st.column_config.TextColumn("当前", width="small"),
-                "归谁实现": st.column_config.TextColumn("归谁实现", width="small"),
+                "实现模块": st.column_config.TextColumn("实现模块", width="small"),
                 "异常原因": st.column_config.TextColumn("异常原因", width="large"),
             },
         )
@@ -248,18 +269,21 @@ def _sidebar() -> None:
 
         st.divider()
         st.caption("门面接入状态")
-        st.caption(backend.summary())
-        sidebar_problems = backend.problems()
-        if sidebar_problems:
-            st.error(f"{len(sidebar_problems)} 个函数接入异常，见顶部状态条")
-        with st.expander("逐个函数", expanded=False):
-            for name, kind in backend.sources().items():
-                reason = sidebar_problems.get(name)
-                st.caption(
-                    ("✅ " if kind == "real" else "🧪 ")
-                    + f"{name}（{kind}）"
-                    + (f" · ❌ {reason}" if reason else "")
-                )
+        side_status, side_bad, side_ratio, side_error = _facade_state()
+        if side_error:
+            st.error("接入状态读取失败：" + side_error)
+        else:
+            st.caption(side_ratio)
+            if side_bad:
+                st.error(f"{len(side_bad)} 个函数接入异常，见顶部状态条")
+            with st.expander("逐个函数", expanded=False):
+                for name, kind in side_status.items():
+                    reason = side_bad.get(name)
+                    st.caption(
+                        ("✅ " if kind == "real" else "🧪 ")
+                        + f"{name}（{kind}）"
+                        + (f" · ❌ {reason}" if reason else "")
+                    )
         st.caption("🧪 = 桩，✅ = 真实现，❌ = 模块在但接不上")
 
         with st.expander("📐 公式速查", expanded=False):
@@ -296,9 +320,12 @@ def _tab_qa() -> None:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
                 if msg["role"] == "assistant":
-                    # 回答来源：演示/答辩时要能当场说清"这是桩还是真模型"
-                    if msg.get("source") == "real":
+                    # 回答来源：演示/答辩时要能当场说清"这是桩、真模型，还是这次失败了"
+                    source = msg.get("source")
+                    if source == "real":
                         st.caption("✅ 真实模型回答")
+                    elif source == "error":
+                        st.caption("⚠️ 这次没有拿到模型回答（错误信息见上方）")
                     else:
                         st.caption("🧪 桩回答（`app/qa.py` 就绪后自动切真实现）")
 
@@ -307,6 +334,7 @@ def _tab_qa() -> None:
         return
 
     st.session_state.history.append({"role": "user", "content": prompt})
+    failed = False
     try:
         with st.spinner("推导中…"):
             reply = backend.answer(
@@ -317,18 +345,16 @@ def _tab_qa() -> None:
                 history=st.session_state.history[:-1][-HISTORY_WINDOW:],
             )
     except Exception as exc:  # noqa: BLE001 —— 模型没配/网络断，页面给提示而不是白屏
+        failed = True
         reply = (
             f"⚠️ 这次调用失败了：{exc}\n\n"
             "检查侧边栏的「模型配置状态」缺哪几项，或稍后重试。"
         )
 
-    st.session_state.history.append(
-        {
-            "role": "assistant",
-            "content": reply,
-            "source": backend.sources().get("answer", "stub"),
-        }
-    )
+    # 来源标记说的是「这一条回答是谁给的」，不是「门面现在接的是谁」：
+    # 真实现抛错时门面依然是 real，但这条消息是错误提示，不能标成 ✅ 真实回答。
+    source = "error" if failed else backend.sources().get("answer", "stub")
+    st.session_state.history.append({"role": "assistant", "content": reply, "source": source})
     st.rerun()
 
 
@@ -339,7 +365,12 @@ def _tab_intake() -> None:
     st.subheader("② 错题录入")
     st.caption("第一步：把做错的题交进来（手输或拍照）→ 第二步：核对识别结果、改错、确认入库")
 
-    mode = st.radio("录入方式", ["手输题干", "上传照片"], horizontal=True)
+    mode = st.radio("录入方式", ["手输题干", "上传照片"], horizontal=True, key="intake_mode")
+    # 换录入方式时清掉上一轮的草稿 —— 否则会拿「手输」识别出来的草稿，
+    # 在「上传照片」页上确认入库，等于把 A 的识别结果当成 B 的。
+    if st.session_state.get("_last_intake_mode") != mode:
+        st.session_state["_last_intake_mode"] = mode
+        st.session_state.pending_draft = None
 
     if mode == "手输题干":
         question = st.text_area(
@@ -374,7 +405,8 @@ def _tab_intake() -> None:
             st.image(upload, caption=f"{upload.name} · {size_mb:.1f} MB")
             if size_mb > MAX_IMAGE_MB:
                 st.error(f"图片 {size_mb:.1f} MB 超过 {MAX_IMAGE_MB} MB 上限，先压缩或截图后再传。")
-        if st.button("识别并归类", type="primary", disabled=upload is None):
+        too_big = upload is not None and upload.size / (1024 * 1024) > MAX_IMAGE_MB
+        if st.button("识别并归类", type="primary", disabled=upload is None or too_big):
             if upload is None:  # 双保险：按钮禁用后仍防住空请求
                 st.warning("先选一张图片再点识别。")
             else:
@@ -538,19 +570,27 @@ def _tab_mastery() -> None:
     )
 
     # 最薄弱：只在「未掌握 / 基本掌握」里挑掌握度最低的（样本不足不参与）
+    # NaN 兜底：契约要求 0.0，但真实实现很容易因为除零/LEFT JOIN 给 NaN，
+    # 而 st.progress(NaN) 会直接抛异常把整页打挂 —— 这里统一压到 [0, 1]。
+    def _ratio(value) -> float:
+        if pd.isna(value):
+            return 0.0
+        return min(max(float(value), 0.0), 1.0)
+
     candidates = df[df["status"].isin(["未掌握", "基本掌握"])].sort_values("mastery")
     with st.container(border=True):
         if len(candidates):
             top = candidates.iloc[0]
+            mastery_ratio = _ratio(top["mastery"])
             st.markdown(f"**当前最薄弱**：{top['kp_name']}　·　{top['chapter_name']}")
-            st.progress(float(top["mastery"]), text=f"掌握度 {top['mastery']:.0%}")
+            st.progress(mastery_ratio, text=f"掌握度 {mastery_ratio:.0%}")
         else:
             st.caption("暂时没有可排名的薄弱项 —— 先做几道练习。")
 
     view = df.assign(
         状态=df["status"].map(STATUS_ICONS).fillna(df["status"]),
-        正确率= (df["correct_rate"] * 100).round(0),
-        掌握度= (df["mastery"] * 100).round(0),
+        正确率=(df["correct_rate"].apply(_ratio) * 100).round(0),
+        掌握度=(df["mastery"].apply(_ratio) * 100).round(0),
     )
     st.dataframe(
         view[["kp_name", "chapter_name", "attempts", "correct", "正确率", "掌握度", "状态"]],
@@ -607,6 +647,7 @@ def _tab_practice() -> None:
                 answers[item["id"]] = st.radio(
                     f"第 {index} 题",
                     options,
+                    index=None,  # 默认不预选：否则「什么都不点就提交」会拿第一个选项当答案
                     format_func=lambda key, opts=item["options"]: f"{key}. {opts[key]}",
                     key=f"choice_{item['id']}",
                     label_visibility="collapsed",
@@ -625,11 +666,31 @@ def _tab_practice() -> None:
             )
 
     if st.button("提交并判分"):
+        # 未作答不判分：单选/填空都可能有默认值，直接提交等于拿默认值当答案，
+        # 会产出假成绩（等 C₂ 的 record_result 落地后还会写进 practice_log，污染掌握度）。
+        unanswered = [
+            index
+            for index, item in enumerate(items, start=1)
+            if not str(answers.get(item["id"]) or "").strip()
+        ]
+        if unanswered:
+            st.warning("这些题还没作答：" + "、".join(f"第 {i} 题" for i in unanswered))
+            return
+
         try:
-            st.session_state.practice_result = backend.record_result(items, answers)
+            results = backend.record_result(items, answers)
         except Exception as exc:  # noqa: BLE001
             st.error(f"判分失败：{exc}")
             return
+
+        # 数量对不上就别渲染：zip 会按短的截断，3 题可能显示成 2/2，比报错更糟
+        received = len(results) if hasattr(results, "__len__") else "?"
+        if not isinstance(results, list) or len(results) != len(items):
+            st.error(f"判分结果数量不对（{len(items)} 题收到 {received} 个结果），已停止渲染以免给出错误成绩。")
+            st.session_state.practice_result = None
+            return
+
+        st.session_state.practice_result = results
         st.toast("判分完成", icon="🎯")
 
     results = st.session_state.practice_result
@@ -655,10 +716,13 @@ def main() -> None:
     _status_strip()
 
     # 模式提示：stub 是演示开关（没配密钥也能跑），real 是交付前自查（缺一个就报错）
-    if backend.mode() == "stub":
+    status, _bad, _ratio, read_error = _facade_state()
+    if read_error:
+        pass  # 状态条已经把读取失败的原因打在页面上了，这里不重复刷屏
+    elif backend.mode() == "stub":
         st.caption("🔧 `TUTOR_BACKEND=stub`：当前全部走桩数据，不会调用模型。")
     elif backend.mode() == "real":
-        missing = [name for name, kind in backend.sources().items() if kind != "real"]
+        missing = [name for name, kind in status.items() if kind != "real"]
         if missing:
             st.error(
                 "**TUTOR_BACKEND=real（严格自查模式）**：以下函数还没接上真实现 —— "
@@ -667,7 +731,6 @@ def main() -> None:
 
     st.divider()
 
-    status = backend.sources()
     if any(kind == "stub" for kind in status.values()):
         st.caption(
             "🧪 界面已跑通，部分函数仍是桩（见侧边栏「数据来源」）。"

@@ -610,8 +610,36 @@ def _tab_mastery() -> None:
         },
     )
 
-    st.caption("各知识点基础正确率对比（%）")
-    st.bar_chart(view.set_index("kp_name")[["正确率"]])
+    st.caption("各知识点基础正确率对比（纵轴固定 0~100%，避免不同批次自适应缩放导致误读）")
+    if len(view):
+        # 用原生 vega-lite（不是 HTML/JS 注入）固定 Y 轴域为 [0, 100]：
+        # st.bar_chart 会自动缩放到数据范围，全是 60~80 时看起来像快满分。
+        st.vega_lite_chart(
+            view[["kp_name", "正确率"]],
+            {
+                "mark": {"type": "bar", "cornerRadiusTopLeft": 3, "cornerRadiusTopRight": 3},
+                "encoding": {
+                    "x": {
+                        "field": "kp_name",
+                        "type": "nominal",
+                        "sort": None,
+                        "axis": {"labelAngle": -20, "title": None},
+                    },
+                    "y": {
+                        "field": "正确率",
+                        "type": "quantitative",
+                        "scale": {"domain": [0, 100]},
+                        "axis": {"title": "基础正确率（%）", "values": [0, 25, 50, 75, 100]},
+                    },
+                    "tooltip": [
+                        {"field": "kp_name", "type": "nominal", "title": "知识点"},
+                        {"field": "正确率", "type": "quantitative", "title": "正确率（%）"},
+                    ],
+                },
+            },
+        )
+    else:
+        st.caption("还没有知识点可以统计。")
 
 
 # ============================================================

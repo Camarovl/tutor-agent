@@ -275,11 +275,21 @@ confidence / source / degraded / note`
 
 ---
 
-## 八、界面 — `streamlit_app.py`　维护人：D
+## 八、界面 — `streamlit_app.py` + `app/ui_theme.py`　维护人：D
 
 只允许调用上面各节的函数。🔴 **不许出现 SQL、不许发网络请求、不许引入前端框架。**
 
 四个标签页：① 知识点问答 ② 错题录入 ③ 掌握度分析 ④ 针对性练习
+
+### 界面分两层
+
+| 文件 | 职责 | 约束 |
+|---|---|---|
+| `streamlit_app.py` | 交互与布局：组件、状态、调用后端 | 不写 SQL、不发网络 |
+| `app/ui_theme.py` | 视觉层：注入 CSS 与主题色 | 只产出外观；不碰业务、不读写 `session_state` |
+| `.streamlit/config.toml` | Streamlit 原生主题色 | 删掉不影响功能，只是回到默认配色 |
+
+🔴 **可整段回退**：删掉 `ui_theme.py` 和 `.streamlit/config.toml`，界面应回到原生样式且功能完好。做不到这一点说明视觉层里混进了逻辑，要拆出来。
 
 ⚠️ 开场白只做页面渲染，不写进对话历史（否则发给模型的序列以 assistant 开头会报错）。
 

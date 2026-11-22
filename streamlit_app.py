@@ -610,20 +610,30 @@ def _tab_mastery() -> None:
         },
     )
 
-    st.caption("各知识点基础正确率对比（纵轴固定 0~100%，避免不同批次自适应缩放导致误读）")
+    st.caption("各知识点基础正确率对比（纵轴固定 0~100%）")
     if len(view):
         # 用原生 vega-lite（不是 HTML/JS 注入）固定 Y 轴域为 [0, 100]：
         # st.bar_chart 会自动缩放到数据范围，全是 60~80 时看起来像快满分。
+        # 标签显式横排（labelAngle=0）+ 不截断（labelLimit=0）+ 固定高度，
+        # 避免长中文名被旋转后裁掉、看不出哪根柱子是哪个知识点。
         st.vega_lite_chart(
             view[["kp_name", "正确率"]],
             {
+                "height": 360,
+                "padding": 5,
                 "mark": {"type": "bar", "cornerRadiusTopLeft": 3, "cornerRadiusTopRight": 3},
                 "encoding": {
                     "x": {
                         "field": "kp_name",
                         "type": "nominal",
                         "sort": None,
-                        "axis": {"labelAngle": -20, "title": None},
+                        "axis": {
+                            "title": "知识点",
+                            "labelAngle": 0,
+                            "labelFontSize": 10,
+                            "labelLimit": 0,
+                            "labelPadding": 6,
+                        },
                     },
                     "y": {
                         "field": "正确率",
@@ -637,6 +647,10 @@ def _tab_mastery() -> None:
                     ],
                 },
             },
+        )
+        # 兜底对照：万一某些环境下 x 轴标签被裁掉，这一行仍然能对上是哪根柱子
+        st.caption(
+            "　".join(f"{name} {pct:.0f}%" for name, pct in zip(view["kp_name"], view["正确率"]))
         )
     else:
         st.caption("还没有知识点可以统计。")

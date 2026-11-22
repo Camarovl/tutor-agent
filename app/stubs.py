@@ -26,8 +26,10 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import os
 import sqlite3
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -87,19 +89,68 @@ STYLES = ["简洁", "详细"]
 
 
 # ============================================================
+# 运行模式与失败记录 —— 让「门面静默回落」变成看得见
+# ============================================================
+#: 只读这一个环境变量，不碰 .env、不读密钥。
+#:   auto（默认）：能导入就用真实现
+#:   stub       ：全部强制用桩 —— 演示时没配 API Key 也不报错
+#:   real       ：全部必须是真实现，缺一个就在页面顶部报错（交付前自查）
+def _check_modes() -> str:
+    """读取并校验 TUTOR_BACKEND。非法值不抛异常（否则整页白屏），只警告并回落 auto。"""
+    raw = os.environ.get("TUTOR_BACKEND", "auto")
+    mode = (raw or "auto").strip().lower() or "auto"
+    if mode not in ("auto", "stub", "real"):
+        print(
+            f"[stubs] 未知的 TUTOR_BACKEND={raw!r}，已回落到 auto"
+            "（可选值：auto / stub / real）",
+            file=sys.stderr,
+        )
+        return "auto"
+    return mode
+
+
+_MODE = _check_modes()
+
+#: 键是 "模块名.函数名"，值是给人看的原因。
+#: 只记录「模块存在但接不上」这种异常；模块还没写属于正常状态，不记录。
+_FAILURES: dict[str, str] = {}
+
+
+# ============================================================
 # 门面：找真实现
 # ============================================================
 def _real(module_name: str, func_name: str):
-    """取真实现；模块还不存在或缺这个函数时返回 None。
+    """取真实现；模块还不存在、或取不到函数时返回 None。
 
-    只捕获 ImportError —— 队友文件里自己写错导致的 ImportError 也会落到桩上，
-    这是已知取舍：宁可让界面先用桩跑起来，也不要因为一个 import 错误整页白屏。
+    三种情况要分清楚，因为处理方式完全不同：
+      ① 模块文件还没写        → 正常（队友还没开工），不记录，回落桩
+      ② 模块存在但导入就炸     → 异常（多半是 from .prompts import X 拼错了），记录原因
+      ③ 模块能导入但没有这个函数 → 异常（签名/名字对不上），记录原因
+
+    🔴 只吞 ImportError/AttributeError。真实现的**运行期**异常照常向上抛 ——
+       否则真实报错也会被伪装成「桩在跑」。
     """
+    if _MODE == "stub":
+        return None
+
+    key = f"{module_name}.{func_name}"
     try:
         module = importlib.import_module(module_name)
-    except ImportError:
+    except ImportError as exc:
+        # find_spec 用来区分「文件不存在」和「文件在但导入失败」
+        if importlib.util.find_spec(module_name) is not None:
+            _FAILURES[key] = f"模块存在但导入失败：{exc}"
+        else:
+            _FAILURES.pop(key, None)
         return None
-    return getattr(module, func_name, None)
+
+    fn = getattr(module, func_name, None)
+    if fn is None:
+        _FAILURES[key] = f"{module_name} 里没有 {func_name}()"
+        return None
+
+    _FAILURES.pop(key, None)  # 修好之后把旧记录清掉，别一直挂着红
+    return fn
 
 
 #: 哪些函数归谁实现 —— 侧边栏据此显示「真 / 桩」，第 5 步同步契约第九节清单也靠它
@@ -121,11 +172,50 @@ _FACADE = {
 
 
 def sources() -> dict[str, str]:
-    """每个函数当前是走真实现（real）还是桩（stub）。"""
+    """每个函数当前是走真实现（real）还是桩（stub）。
+
+    ⚠️ 返回格式固定为 {函数名: "real" | "stub"}，界面靠它判断，别改。
+    """
     return {
         name: ("real" if _real(mod, func) else "stub")
         for name, (mod, func) in _FACADE.items()
     }
+
+
+def problems() -> dict[str, str]:
+    """只返回「模块已存在但接不上」的项：函数名 → 原因。
+
+    正常的「队友还没写」不会出现在这里 —— 那种情况没有排查价值，
+    混进来只会让人每天看见一片红，最后谁都懒得看。
+    """
+    return {
+        name: _FAILURES[f"{mod}.{func}"]
+        for name, (mod, func) in _FACADE.items()
+        if f"{mod}.{func}" in _FAILURES
+    }
+
+
+def summary() -> str:
+    """一行汇总，形如「真 9 / 桩 4（其中 1 个异常）」；异常为 0 时不显示后半句。"""
+    status = sources()
+    real = sum(1 for kind in status.values() if kind == "real")
+    text = f"真 {real} / 桩 {len(status) - real}"
+    bad = len(problems())
+    if bad:
+        text += f"（其中 {bad} 个异常）"
+    if _MODE != "auto":
+        text += f"［TUTOR_BACKEND={_MODE}］"
+    return text
+
+
+def mode() -> str:
+    """当前门面模式：auto / stub / real（界面用来判断要不要做严格自查）。"""
+    return _MODE
+
+
+def facade() -> dict[str, str]:
+    """函数名 → 真实现所在模块。只读拷贝，供界面显示「归谁实现」。"""
+    return {name: module for name, (module, _func) in _FACADE.items()}
 
 
 def db_ready() -> bool:

@@ -163,7 +163,11 @@ def _hero() -> None:
 
 
 def _status_strip() -> None:
-    """一行小号系统状态 —— 让页面像一块仪表盘，数字全部来自真实库。"""
+    """一行系统状态 + 门面接入详情 —— 让「门面到底接到了什么」看得见。
+
+    比例与异常都通过 `backend.summary()` / `backend.problems()` 拿，
+    界面不自己数 —— 否则会出现两份口径，谁也说不清哪份是对的。
+    """
     ready = backend.db_ready()
     try:
         chapters = len(backend.chapter_candidates()) if ready else 0
@@ -172,15 +176,49 @@ def _status_strip() -> None:
     except Exception:  # noqa: BLE001
         chapters = kps = wrong = 0
 
-    mastery_mode = "真" if backend.sources().get("mastery_table") == "real" else "桩"
+    status = backend.sources()
+    bad = backend.problems()
+
     bits = [
         f"◈ 章节 **{chapters}**",
         f"◈ 知识点 **{kps}**",
         f"◈ 错题 **{wrong}**",
-        f"◈ 掌握模型 **{mastery_mode}**",
+        f"◈ 接入 **{backend.summary()}**",
         f"◈ 风格 **{st.session_state.style}**",
     ]
+    if bad:
+        bits.append(f"⚠️ **{len(bad)} 个接入异常**")
     st.caption("　　".join(bits))
+
+    if bad:
+        st.error(
+            "**门面接入异常**：这些函数本该走真实现，但导入或取函数失败，已回落桩 ——\n\n"
+            + "\n".join(f"- `{name}`：{reason}" for name, reason in bad.items())
+        )
+
+    with st.expander(f"查看 {len(status)} 个函数的接入状态", expanded=bool(bad)):
+        owners = backend.facade()
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "函数": name,
+                        "当前": "✅ 真实现" if kind == "real" else "🧪 桩",
+                        "归谁实现": owners.get(name, "—"),
+                        "异常原因": bad.get(name, ""),
+                    }
+                    for name, kind in status.items()
+                ]
+            ),
+            hide_index=True,
+            column_config={
+                "函数": st.column_config.TextColumn("函数", width="medium"),
+                "当前": st.column_config.TextColumn("当前", width="small"),
+                "归谁实现": st.column_config.TextColumn("归谁实现", width="small"),
+                "异常原因": st.column_config.TextColumn("异常原因", width="large"),
+            },
+        )
+        st.caption("✅ = 已接上队友的真实现；🧪 = 仍在跑桩。异常原因非空才是问题，空着说明队友只是还没写。")
 
 
 # ============================================================
@@ -209,14 +247,20 @@ def _sidebar() -> None:
             st.success("模型已配置")
 
         st.divider()
-        st.caption("数据来源（门面当前接到的实现）")
-        status = backend.sources()
-        n_real = sum(1 for v in status.values() if v == "real")
-        st.caption(f"真实现 {n_real} 项 · 桩 {len(status) - n_real} 项")
+        st.caption("门面接入状态")
+        st.caption(backend.summary())
+        sidebar_problems = backend.problems()
+        if sidebar_problems:
+            st.error(f"{len(sidebar_problems)} 个函数接入异常，见顶部状态条")
         with st.expander("逐个函数", expanded=False):
-            for name, kind in status.items():
-                st.caption(("✅ " if kind == "real" else "🧪 ") + f"{name}（{kind}）")
-        st.caption("🧪 = 桩，✅ = 队友的真实实现已就位")
+            for name, kind in backend.sources().items():
+                reason = sidebar_problems.get(name)
+                st.caption(
+                    ("✅ " if kind == "real" else "🧪 ")
+                    + f"{name}（{kind}）"
+                    + (f" · ❌ {reason}" if reason else "")
+                )
+        st.caption("🧪 = 桩，✅ = 真实现，❌ = 模块在但接不上")
 
         with st.expander("📐 公式速查", expanded=False):
             st.latex(r"\lim_{x\to 0}\frac{\sin x}{x}=1")
@@ -609,6 +653,18 @@ def main() -> None:
     _sidebar()
     _hero()
     _status_strip()
+
+    # 模式提示：stub 是演示开关（没配密钥也能跑），real 是交付前自查（缺一个就报错）
+    if backend.mode() == "stub":
+        st.caption("🔧 `TUTOR_BACKEND=stub`：当前全部走桩数据，不会调用模型。")
+    elif backend.mode() == "real":
+        missing = [name for name, kind in backend.sources().items() if kind != "real"]
+        if missing:
+            st.error(
+                "**TUTOR_BACKEND=real（严格自查模式）**：以下函数还没接上真实现 —— "
+                + "、".join(f"`{name}`" for name in missing)
+            )
+
     st.divider()
 
     status = backend.sources()

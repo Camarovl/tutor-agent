@@ -1,0 +1,40 @@
+[
+  {
+    "id": "qp_0001",
+    "type": "choice",
+    "chapter_id": "ch_function_limit",
+    "kp_ids": ["kp_等价无穷小替换"],
+    "stem": "求极限 $\\lim_{x\\to 0}\\dfrac{\\sin 3x}{x}$",
+    "options": { "A": "0", "B": "1", "C": "3", "D": "不存在" },
+    "answer": "C",
+    "explanation": "等价无穷小：当 x→0 时 sin 3x ~ 3x，故极限为 3。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0002",
+    "type": "fill",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": ["kp_不定积分换元"],
+    "stem": "计算不定积分 $\\int 2x\\,dx$（填空，含积分常数）",
+    "options": {},
+    "answer": "x^2+C",
+    "explanation": "∫2x dx = x² + C，不定积分不要漏掉任意常数 C。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0003",
+    "type": "choice",
+    "chapter_id": "ch_ode_basic",
+    "kp_ids": ["kp_一阶线性微分方程"],
+    "stem": "微分方程 $y' + y = 0$ 的通解是？",
+    "options": {
+      "A": "$y = Ce^{-x}$",
+      "B": "$y = Ce^{x}$",
+      "C": "$y = Cx$",
+      "D": "$y = C$"
+    },
+    "answer": "A",
+    "explanation": "一阶线性齐次方程，特征方程 r + 1 = 0，特征根 r = -1，故 y = Ce^{-x}。",
+    "difficulty": "medium"
+  }
+]

@@ -287,13 +287,38 @@ confidence / source / degraded / note`
 
 ## 九、桩函数 — `app/stubs.py`　维护人：D
 
-队友代码没好时用来跑通界面。🔴 返回的数据形状必须与本文件约定的完全一致，
-将来只需替换 import 来源，界面代码不动。
+队友代码没好时用来跑通界面。🔴 返回的数据形状必须与本文件约定的完全一致。
 
-在本节下方维护一张清单，标注哪些还是桩：
+### 切换机制（门面，不需要人工改 import）
 
+`streamlit_app.py` 只写 `from app import stubs as backend`。`stubs.py` 里每个函数先找真实现
+（`app.qa` / `app.intake` / `app.profile` / `app.knowledge` / `app.db`），**导入成功就转发，
+ImportError 才回落桩**。所以队友的模块一进 main，页面自动切真数据，界面代码一行都不用改。
+
+只吞 ImportError：真实现存在但运行时抛异常会照常向上抛，不会被伪装成「桩在跑」。
+
+真相来源是 `stubs.sources()`：
+
+```powershell
+python -c "from app import stubs; import json; print(json.dumps(stubs.sources(), ensure_ascii=False, indent=2))"
 ```
-[ ] mastery_table()      待 C₂ 实现
-[ ] answer()             待 B 实现
-[ ] analyze_text()       待 B 实现
-```
+
+### 桩清单（2026-11-22 核对；实现变化时同一次改动里更新本节）
+
+| 函数 | 真来源 | 当前 | 阻塞项 |
+|---|---|---|---|
+| `answer()` | `app.qa` | 🧪 桩 | B 的 `qa.py` 未进 main |
+| `analyze_text()` / `analyze_image()` | `app.intake` | 🧪 桩 | B 的 `intake.py` 未进 main |
+| `commit()` | `app.intake` | 🧪 桩（返回 0，不落库） | 同上 |
+| `mastery_table()` | `app.profile` | 🧪 桩（11 列已按第一节对齐） | C₂ 的 `profile.py` 未进 main |
+| `summary_text()` | `app.profile` | 🧪 桩（6 键已对齐） | 同上 |
+| `build_practice_session()` / `grade()` / `record_result()` | `app.profile` | 🧪 桩（题目结构已按第七节） | 同上 |
+| `all_knowledge_points()` / `chapter_candidates()` | `app.knowledge` | ✅ 真 | — |
+| `recent_wrong_questions()` / `wrong_question_count()` | `app.db` | ✅ 真 | — |
+| `is_configured()` / `missing_config_keys()` | 本地读环境变量 | ✅ 真（不联网） | — |
+| `db_ready()` / `sources()` | 本节自有工具函数 | ✅ | — |
+
+### 待对齐
+
+`answer()` 的 `style` 参数目前由界面传中文 `"简洁"` / `"详细"` 原样透传。
+B 的 `qa.py` 落地后若改成英文枚举，只改 `app/stubs.py` 门面一处，界面不动。

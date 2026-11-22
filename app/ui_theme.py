@@ -116,14 +116,20 @@ hr{ border:none !important; border-top:var(--line) !important; margin:1rem 0 !im
   color:var(--muted) !important;
 }
 
-/* ---------- 卡片：纸块 + 硬投影 ---------- */
-[data-testid="stVerticalBlockBorderWrapper"]{
+/* ---------- 卡片：纸块 + 硬投影 ----------
+   ⚠️ Streamlit 1.67 里 `st.container(border=True)` 已经不再产出
+   data-testid="stVerticalBlockBorderWrapper"（我在前端 bundle 里查过，
+   全包 0 次命中）。所以这里保留旧选择器兼容老版本，同时用 :has() 兜底：
+   把「整块内容只有一个公式」的元素容器按纸卡处理，公式卡不会掉样式。 */
+[data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .katex){
   background: var(--card) !important;
   border: var(--line) !important;
   border-radius:4px !important;
   box-shadow: var(--shadow) !important;
 }
 [data-testid="stVerticalBlockBorderWrapper"] > div{ padding:.4rem .35rem; }
+[data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .katex){ padding:10px 12px !important; }
 
 /* ---------- 侧边栏 ---------- */
 [data-testid="stSidebar"]{

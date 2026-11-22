@@ -187,7 +187,13 @@ def problems() -> dict[str, str]:
 
     正常的「队友还没写」不会出现在这里 —— 那种情况没有排查价值，
     混进来只会让人每天看见一片红，最后谁都懒得看。
+
+    🔴 先调一次 sources()：_FAILURES 是在 _real() 里写的，只读不触发的话，
+       单独调用 problems() 会拿到上一轮的空字典 —— 等于「报平安」，
+       而这套可观测性存在的意义恰恰是防假阴性（界面因为先调了 sources()
+       所以看起来是对的，命令行单跑就不对了）。
     """
+    sources()  # 先触发解析，保证 _FAILURES 是最新的
     return {
         name: _FAILURES[f"{mod}.{func}"]
         for name, (mod, func) in _FACADE.items()

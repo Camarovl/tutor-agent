@@ -36,6 +36,7 @@ import pandas as pd
 import streamlit as st
 
 from app import stubs as backend
+from app import ui_theme
 
 SUBJECT = "高等数学"
 
@@ -753,6 +754,7 @@ def _tab_practice() -> None:
 def main() -> None:
     _init_state()
     _sidebar()
+    ui_theme.inject()
     _hero()
     _status_strip()
 

@@ -26,6 +26,15 @@ from app import stubs as backend
 
 SUBJECT = "高等数学"
 
+#: 传给模型的对话历史窗口（条数，user+assistant 合计）。
+#: 界面显示全部历史，但只把最近几条发给模型 —— 不截断的话聊久了会把
+#: 上下文和费用一起顶爆，而且早期闲聊对回答没有帮助。
+HISTORY_WINDOW = 6
+
+#: 上传图片的大小上限（MB）。超了就提示先压缩 —— 别把 10 MB 的手机原图
+#: 塞进 base64 再发模型，token 和等待时间都会爆。
+MAX_IMAGE_MB = 5
+
 #: 开场白：只做页面渲染，🔴 绝不写进 st.session_state.history。
 #: 原因：发给模型的 messages 序列若以 assistant 开头，多数模型的
 #: chat template 会直接报 "No user query found in messages"。
@@ -133,25 +142,40 @@ def _tab_qa() -> None:
     for msg in st.session_state.history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg["role"] == "assistant":
+                # 回答来源：演示/答辩时要能当场说清"这是桩还是真模型"
+                if msg.get("source") == "real":
+                    st.caption("✅ 真实模型回答")
+                else:
+                    st.caption("🧪 桩回答（`app/qa.py` 就绪后自动切真实现）")
 
-    prompt = st.chat_input("问一个高等数学问题，例如：洛必达法则什么时候能用？")
-    if not prompt:
+    prompt = (st.chat_input("问一个高等数学问题，例如：洛必达法则什么时候能用？") or "").strip()
+    if not prompt:  # 空白或全空格不触发调用
         return
 
     st.session_state.history.append({"role": "user", "content": prompt})
     try:
         with st.spinner("思考中…"):
-            # history 传「本轮之前」的消息，不含刚追加的这条
             reply = backend.answer(
                 prompt,
                 SUBJECT,
                 st.session_state.style,
-                history=st.session_state.history[:-1],
+                # 只带最近几条，且不含刚追加的这条
+                history=st.session_state.history[:-1][-HISTORY_WINDOW:],
             )
     except Exception as exc:  # noqa: BLE001 —— 模型没配/网络断，页面给提示而不是白屏
-        reply = f"⚠️ 这次调用失败了：{exc}\n\n检查侧边栏的模型配置状态，或稍后重试。"
+        reply = (
+            f"⚠️ 这次调用失败了：{exc}\n\n"
+            "检查侧边栏的「模型配置状态」缺哪几项，或稍后重试。"
+        )
 
-    st.session_state.history.append({"role": "assistant", "content": reply})
+    st.session_state.history.append(
+        {
+            "role": "assistant",
+            "content": reply,
+            "source": backend.sources().get("answer", "stub"),
+        }
+    )
     st.rerun()
 
 
@@ -160,7 +184,7 @@ def _tab_qa() -> None:
 # ============================================================
 def _tab_intake() -> None:
     st.subheader("② 错题录入")
-    st.caption("识别只是「建议」，字段全部可改，点确认才入库")
+    st.caption("第一步：把做错的题交进来（手输或拍照）→ 第二步：核对识别结果、改错、确认入库")
 
     mode = st.radio("录入方式", ["手输题干", "上传照片"], horizontal=True)
 
@@ -170,21 +194,36 @@ def _tab_intake() -> None:
             height=90,
             placeholder="求极限 lim(x→0) sin3x/x",
         )
-        student_answer = st.text_area("我当时写的答案", height=70)
-        correct_answer = st.text_input("参考答案（可留空，交给模型判）")
-        if st.button("识别并归类", type="primary"):
+        col_s, col_c = st.columns(2)
+        student_answer = col_s.text_area("我当时写的答案", height=70)
+        correct_answer = col_c.text_input("参考答案（可留空，交给模型判）")
+
+        question = question.strip()
+        if not question:
+            st.caption("题干必填：至少写一句题干，识别才有输入。")
+        if st.button("识别并归类", type="primary", disabled=not question):
             with st.spinner("正在抽取题干、判定错因、匹配知识点…"):
                 st.session_state.pending_draft = backend.analyze_text(
                     question, student_answer, correct_answer
                 )
     else:
-        upload = st.file_uploader("上传题目照片（高数公式识别成功率有限，识别后可手改）", type=["jpg", "jpeg", "png"])
-        if st.button("识别并归类", type="primary"):
-            if upload is None:
+        upload = st.file_uploader(
+            "上传题目照片（高数公式的 ∫、lim、上下限识别成功率有限，识别后务必人工核对）",
+            type=["jpg", "jpeg", "png"],
+        )
+        if upload is not None:
+            size_mb = upload.size / (1024 * 1024)
+            st.image(upload, caption=f"{upload.name} · {size_mb:.1f} MB")
+            if size_mb > MAX_IMAGE_MB:
+                st.error(f"图片 {size_mb:.1f} MB 超过 {MAX_IMAGE_MB} MB 上限，先压缩或截图后再传。")
+        if st.button("识别并归类", type="primary", disabled=upload is None):
+            if upload is None:  # 双保险：按钮禁用后仍防住空请求
                 st.warning("先选一张图片再点识别。")
             else:
                 with st.spinner("正在识别图片…"):
-                    st.session_state.pending_draft = backend.analyze_image(upload.getvalue())
+                    st.session_state.pending_draft = backend.analyze_image(
+                        upload.getvalue(), extra_note=""
+                    )
 
     draft = st.session_state.pending_draft
     if draft is None:
@@ -197,6 +236,11 @@ def _tab_intake() -> None:
 
     st.divider()
     st.subheader("确认与修正")
+    source_label = {"text": "手输", "image": "拍照"}.get(draft.source, draft.source)
+    st.caption(
+        f"识别来源：{source_label} · 置信度 {draft.confidence:.0%} · "
+        f"错因判定：{backend.ERROR_TYPE_LABELS.get(draft.error_type, draft.error_type)}"
+    )
     if draft.note:
         st.caption(f"识别备注：{draft.note}")
 

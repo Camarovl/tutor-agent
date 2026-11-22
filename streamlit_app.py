@@ -611,14 +611,15 @@ def _tab_mastery() -> None:
         },
     )
 
-    st.caption("各知识点基础正确率对比（纵轴固定 0~100%）")
+    st.caption("各知识点基础正确率对比（%）")
     if len(view):
         # 柱状图交给 Altair 生成 spec（Streamlit 自带依赖，渲染走 st.altair_chart）。
         # 之前手写 vega spec 有两个坑：
         #   ① "padding": 5 让 ArrowVegaLiteChart 主题合并时报
         #      "Cannot create property 'bottom' on number '5'"
         #   ② 手写 axis 的旋转/裁切组合会把 x 轴标签整条吞掉
-        # 现在只声明「Y 轴域固定 [0, 100] + x 轴横排不截断」，布局交给库自己算。
+        # 现在竖排标签（labelAngle=90）+ labelOverlap=False 强制全部显示，
+        # 布局与轴区尺寸交给库算（autosize: fit + contains: padding）。
         chart = (
             alt.Chart(view[["kp_name", "正确率"]])
             .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
@@ -627,30 +628,29 @@ def _tab_mastery() -> None:
                     "kp_name:N",
                     sort=None,
                     axis=alt.Axis(
-                        title="知识点",
-                        labelAngle=0,
-                        labelFontSize=10,
+                        title=None,
+                        labelAngle=90,
+                        labelAlign="left",
+                        labelBaseline="middle",
+                        labelFontSize=11,
                         labelLimit=0,
+                        labelOverlap=False,
                         labelPadding=6,
                     ),
                 ),
                 y=alt.Y(
                     "正确率:Q",
                     scale=alt.Scale(domain=[0, 100]),
-                    axis=alt.Axis(title="基础正确率（%）", values=[0, 25, 50, 75, 100]),
+                    axis=alt.Axis(title=None, values=[0, 20, 40, 60, 80, 100]),
                 ),
                 tooltip=[
                     alt.Tooltip("kp_name:N", title="知识点"),
                     alt.Tooltip("正确率:Q", title="正确率（%）"),
                 ],
             )
-            .properties(width="container", height=340)
+            .properties(width="container", height=360)
         )
         st.altair_chart(chart)
-        # 兜底对照：万一某个环境里 x 轴标签还是被裁，这一行能直接读
-        st.caption(
-            "　".join(f"{name} {pct:.0f}%" for name, pct in zip(view["kp_name"], view["正确率"]))
-        )
     else:
         st.caption("还没有知识点可以统计。")
 

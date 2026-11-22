@@ -7,8 +7,18 @@
 1. 🔴 不写 SQL。要数据一律调 backend.xxx()，SQL 只在 app/db.py 里。
 2. 🔴 不发网络请求。全项目只有 app/llm_client.py 能发，
    所以这里不 import openai / requests / httpx / urllib。
-3. 🔴 不引 HTML/CSS/JS 或前端框架。只用 Streamlit 原生组件，
-   不用 unsafe_allow_html、不塞 <script>、不自己画 CSS。
+3. 🔴 不引 HTML/CSS/JS 或前端框架。所有视觉都靠 Streamlit 原生组件：
+   卡片用 container(border=True)、公式用 st.latex（KaTeX）、
+   进度用 ProgressColumn / st.progress、动效靠 st.empty() 定时重绘。
+   不写 unsafe_allow_html，不塞 <style>/<script>。
+
+视觉效果怎么做的（没有一行 CSS）
+------------------------------------------------------------
+· 公式主视觉：hero 三条数学 + 一条轮播公式（首次进入播一次）
+· 卡片层次：container(border=True) 分组，深色主题由 .streamlit 配置决定
+· 数值动感：指标卡首次渲染时从 0 滚到真实值（每会话一次，约 0.3 秒）
+· 过程动感：识别走 st.status 分步状态、判分后 st.toast 弹提示
+· 掌握度：ProgressColumn 显示进度条，状态用 🔴🟡🟢⚪ 四档图标
 
 后端怎么接
 ------------------------------------------------------------
@@ -19,21 +29,14 @@ app/stubs.py 里是门面：队友的 qa.py / intake.py / profile.py 一进 main
 
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 import streamlit as st
 
 from app import stubs as backend
 
 SUBJECT = "高等数学"
-
-#: 传给模型的对话历史窗口（条数，user+assistant 合计）。
-#: 界面显示全部历史，但只把最近几条发给模型 —— 不截断的话聊久了会把
-#: 上下文和费用一起顶爆，而且早期闲聊对回答没有帮助。
-HISTORY_WINDOW = 6
-
-#: 上传图片的大小上限（MB）。超了就提示先压缩 —— 别把 10 MB 的手机原图
-#: 塞进 base64 再发模型，token 和等待时间都会爆。
-MAX_IMAGE_MB = 5
 
 #: 开场白：只做页面渲染，🔴 绝不写进 st.session_state.history。
 #: 原因：发给模型的 messages 序列若以 assistant 开头，多数模型的
@@ -44,9 +47,41 @@ OPENING = (
     "只回答高等数学范围内的内容；范围外的问题我会礼貌拒绝并把你引回课程。"
 )
 
+#: 传给模型的对话历史窗口（条数，user+assistant 合计）。
+#: 界面显示全部历史，但只把最近几条发给模型 —— 不截断的话聊久了会把
+#: 上下文和费用一起顶爆，而且早期闲聊对回答没有帮助。
+HISTORY_WINDOW = 6
+
+#: 上传图片的大小上限（MB）。超了就提示先压缩 —— 别把 10 MB 的手机原图
+#: 塞进 base64 再发模型，token 和等待时间都会爆。
+MAX_IMAGE_MB = 5
+
+#: hero 区常驻的三条公式：极限 / 微积分基本定理 / 巴塞尔问题
+HERO_FORMULAS = [
+    r"\lim_{x\to 0}\frac{\sin 3x}{x}=3",
+    r"\frac{d}{dx}\int_{0}^{x} f(t)\,dt=f(x)",
+    r"\sum_{n=1}^{\infty}\frac{1}{n^{2}}=\frac{\pi^{2}}{6}",
+]
+
+#: 首次进入时轮播的公式（播完停在第一条）。纯装饰，但这是「高数成分」最直观的一笔。
+TICKER_FORMULAS = [
+    r"e^{i\pi}+1=0",
+    r"\lim_{n\to\infty}\left(1+\frac{1}{n}\right)^{n}=e",
+    r"\int_{-\infty}^{+\infty} e^{-x^{2}}\,dx=\sqrt{\pi}",
+    r"\nabla f=\left(\frac{\partial f}{\partial x},\ \frac{\partial f}{\partial y}\right)",
+]
+
+#: 掌握度四档 → 图标（数据库存中文标签，展示层只做映射）
+STATUS_ICONS = {
+    "未掌握": "🔴 未掌握",
+    "基本掌握": "🟡 基本掌握",
+    "已掌握": "🟢 已掌握",
+    "样本不足": "⚪ 样本不足",
+}
+
 st.set_page_config(
     page_title="学习辅导 AI 助教 · 高等数学",
-    page_icon="📘",
+    page_icon="∑",
     layout="wide",
 )
 
@@ -54,6 +89,22 @@ st.set_page_config(
 # ============================================================
 # 公共小工具
 # ============================================================
+def _first_time(key: str) -> bool:
+    """这段动效是否还要播。同一会话只播一次，否则每次交互都卡一下。"""
+    if st.session_state.get(key):
+        return False
+    st.session_state[key] = True
+    return True
+
+
+def _count_up(slot, label: str, value: int, steps: int = 6, delay: float = 0.04) -> None:
+    """指标卡数字从 0 滚到真实值 —— 只为了「系统在跑」的感觉，0.25 秒内结束。"""
+    for step in range(1, steps + 1):
+        slot.metric(label, int(round(value * step / steps)))
+        time.sleep(delay)
+    slot.metric(label, value)
+
+
 def _kp_options() -> tuple[list[str], dict[str, str]]:
     """知识点下拉框的选项：只允许选库里已有的，不许自由输入（第 8 步的硬要求）。
 
@@ -83,11 +134,61 @@ def _init_state() -> None:
 
 
 # ============================================================
+# 视觉层：hero + 状态条
+# ============================================================
+def _hero() -> None:
+    """标题区：一句定位 + 三条公式 + 首次进入的公式轮播。"""
+    left, right = st.columns([0.62, 0.38], gap="large")
+
+    with left:
+        st.title("∑ 高等数学 · 智能辅导助教")
+        st.caption(
+            "LIMITS → DERIVATIVES → INTEGRALS → SERIES　｜　"
+            "知识点从真实错题里长出来，掌握度按确定性系数估算"
+        )
+
+    with right:
+        slot = st.empty()
+        if _first_time("hero_ticker"):
+            for formula in TICKER_FORMULAS:
+                slot.latex(formula)
+                time.sleep(0.22)
+        slot.latex(TICKER_FORMULAS[0])
+
+    columns = st.columns(3)
+    for column, formula in zip(columns, HERO_FORMULAS):
+        with column:
+            with st.container(border=True):
+                st.latex(formula)
+
+
+def _status_strip() -> None:
+    """一行小号系统状态 —— 让页面像一块仪表盘，数字全部来自真实库。"""
+    ready = backend.db_ready()
+    try:
+        chapters = len(backend.chapter_candidates()) if ready else 0
+        kps = len(backend.all_knowledge_points()) if ready else 0
+        wrong = backend.wrong_question_count() if ready else 0
+    except Exception:  # noqa: BLE001
+        chapters = kps = wrong = 0
+
+    mastery_mode = "真" if backend.sources().get("mastery_table") == "real" else "桩"
+    bits = [
+        f"◈ 章节 **{chapters}**",
+        f"◈ 知识点 **{kps}**",
+        f"◈ 错题 **{wrong}**",
+        f"◈ 掌握模型 **{mastery_mode}**",
+        f"◈ 风格 **{st.session_state.style}**",
+    ]
+    st.caption("　　".join(bits))
+
+
+# ============================================================
 # 侧边栏
 # ============================================================
 def _sidebar() -> None:
     with st.sidebar:
-        st.header("⚙️ 设置")
+        st.header("⚙️ 控制台")
 
         # 讲解风格：原样透传给 backend.answer 的 style 参数
         st.session_state.style = st.selectbox(
@@ -117,6 +218,11 @@ def _sidebar() -> None:
                 st.caption(("✅ " if kind == "real" else "🧪 ") + f"{name}（{kind}）")
         st.caption("🧪 = 桩，✅ = 队友的真实实现已就位")
 
+        with st.expander("📐 公式速查", expanded=False):
+            st.latex(r"\lim_{x\to 0}\frac{\sin x}{x}=1")
+            st.latex(r"\left(e^{x}\right)'=e^{x}")
+            st.latex(r"\int u\,dv=uv-\int v\,du")
+
         st.divider()
         if not backend.db_ready():
             st.warning("数据库还没建：先跑 `python seed_data.py`（第 5 步）")
@@ -128,26 +234,29 @@ def _sidebar() -> None:
             st.session_state.practice_result = None
             st.rerun()
 
+        st.caption("v0.4 · 界面桩阶段（模块落地后自动切真实现）")
+
 
 # ============================================================
 # ① 知识点问答
 # ============================================================
 def _tab_qa() -> None:
     st.subheader("① 知识点问答")
-    st.caption("回答固定四段：一句话定义 / 通俗解释 / 具体例子 / 常见误区")
+    st.caption("回答固定四段：一句话定义 / 通俗解释 / 具体例子 / 常见误区　｜　越界问题会被礼貌拒绝")
 
-    with st.chat_message("assistant"):
-        st.markdown(OPENING)
+    with st.container(border=True):
+        with st.chat_message("assistant"):
+            st.markdown(OPENING)
 
-    for msg in st.session_state.history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            if msg["role"] == "assistant":
-                # 回答来源：演示/答辩时要能当场说清"这是桩还是真模型"
-                if msg.get("source") == "real":
-                    st.caption("✅ 真实模型回答")
-                else:
-                    st.caption("🧪 桩回答（`app/qa.py` 就绪后自动切真实现）")
+        for msg in st.session_state.history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+                if msg["role"] == "assistant":
+                    # 回答来源：演示/答辩时要能当场说清"这是桩还是真模型"
+                    if msg.get("source") == "real":
+                        st.caption("✅ 真实模型回答")
+                    else:
+                        st.caption("🧪 桩回答（`app/qa.py` 就绪后自动切真实现）")
 
     prompt = (st.chat_input("问一个高等数学问题，例如：洛必达法则什么时候能用？") or "").strip()
     if not prompt:  # 空白或全空格不触发调用
@@ -155,7 +264,7 @@ def _tab_qa() -> None:
 
     st.session_state.history.append({"role": "user", "content": prompt})
     try:
-        with st.spinner("思考中…"):
+        with st.spinner("推导中…"):
             reply = backend.answer(
                 prompt,
                 SUBJECT,
@@ -202,10 +311,15 @@ def _tab_intake() -> None:
         if not question:
             st.caption("题干必填：至少写一句题干，识别才有输入。")
         if st.button("识别并归类", type="primary", disabled=not question):
-            with st.spinner("正在抽取题干、判定错因、匹配知识点…"):
-                st.session_state.pending_draft = backend.analyze_text(
-                    question, student_answer, correct_answer
-                )
+            with st.status("识别中：抽取题干 → 判定错因 → 匹配知识点", expanded=True) as state:
+                st.write("① 抽取题干与答案")
+                time.sleep(0.15)
+                st.write("② 判定错因、设定难度")
+                time.sleep(0.15)
+                draft = backend.analyze_text(question, student_answer, correct_answer)
+                st.write("③ 匹配知识点（命中就复用，没命中才建议新建）")
+                st.session_state.pending_draft = draft
+                state.update(label="识别完成", state="complete", expanded=False)
     else:
         upload = st.file_uploader(
             "上传题目照片（高数公式的 ∫、lim、上下限识别成功率有限，识别后务必人工核对）",
@@ -220,10 +334,13 @@ def _tab_intake() -> None:
             if upload is None:  # 双保险：按钮禁用后仍防住空请求
                 st.warning("先选一张图片再点识别。")
             else:
-                with st.spinner("正在识别图片…"):
-                    st.session_state.pending_draft = backend.analyze_image(
-                        upload.getvalue(), extra_note=""
-                    )
+                with st.status("识别图片中…", expanded=True) as state:
+                    st.write("① 上传图片、准备多模态请求")
+                    time.sleep(0.15)
+                    draft = backend.analyze_image(upload.getvalue(), extra_note="")
+                    st.write("② 抽取题干 → 判定错因 → 匹配知识点")
+                    st.session_state.pending_draft = draft
+                    state.update(label="识别完成", state="complete", expanded=False)
 
     draft = st.session_state.pending_draft
     if draft is None:
@@ -248,46 +365,48 @@ def _tab_intake() -> None:
     if not kp_ids:
         st.caption("数据库里还没有知识点。先跑 `python seed_data.py`，知识点会在问答/录入过程中自己长出来。")
 
-    with st.form("intake_confirm_form"):
-        question_text = st.text_area("题干", value=draft.question_text, height=90)
-        col_a, col_b = st.columns(2)
-        student_answer = col_a.text_area("我的答案", value=draft.student_answer, height=70)
-        correct_answer = col_b.text_area("正确答案", value=draft.correct_answer, height=70)
-        steps_text = st.text_area(
-            "解题步骤（每行一步）",
-            value="\n".join(draft.solution_steps or []),
-            height=100,
-        )
-        selected_kp = st.multiselect(
-            "涉及知识点（只能选库里已有的；不合适的走下面的「建议新建」）",
-            options=kp_ids,
-            default=[k for k in (draft.knowledge_ids or []) if k in kp_ids],
-            format_func=lambda k: kp_labels.get(k, k),
-        )
-        col_c, col_d = st.columns(2)
-        error_type = col_c.selectbox(
-            "错因类型",
-            options=list(backend.ERROR_TYPE_LABELS),
-            index=list(backend.ERROR_TYPE_LABELS).index(draft.error_type)
-            if draft.error_type in backend.ERROR_TYPE_LABELS
-            else len(backend.ERROR_TYPE_LABELS) - 1,
-            format_func=lambda k: backend.ERROR_TYPE_LABELS[k],
-        )
-        difficulty = col_d.selectbox(
-            "难度",
-            options=list(backend.DIFFICULTY_LABELS),
-            index=list(backend.DIFFICULTY_LABELS).index(draft.difficulty)
-            if draft.difficulty in backend.DIFFICULTY_LABELS
-            else 1,
-            format_func=lambda k: backend.DIFFICULTY_LABELS[k],
-        )
-        if draft.new_concepts:
-            st.caption("模型建议新建的知识点（是否真建由 C₁ 的 find_or_create 查重后决定）：")
-            for concept in draft.new_concepts:
-                st.caption(f"· {concept.get('name')} → {concept.get('chapter_id')}")
-        submitted = st.form_submit_button("确认入库")
+    with st.container(border=True):
+        with st.form("intake_confirm_form"):
+            question_text = st.text_area("题干", value=draft.question_text, height=90)
+            col_a, col_b = st.columns(2)
+            student_answer = col_a.text_area("我的答案", value=draft.student_answer, height=70)
+            correct_answer = col_b.text_area("正确答案", value=draft.correct_answer, height=70)
+            steps_text = st.text_area(
+                "解题步骤（每行一步）",
+                value="\n".join(draft.solution_steps or []),
+                height=100,
+            )
+            selected_kp = st.multiselect(
+                "涉及知识点（只能选库里已有的；不合适的走下面的「建议新建」）",
+                options=kp_ids,
+                default=[k for k in (draft.knowledge_ids or []) if k in kp_ids],
+                format_func=lambda k: kp_labels.get(k, k),
+            )
+            col_c, col_d = st.columns(2)
+            error_type = col_c.selectbox(
+                "错因类型",
+                options=list(backend.ERROR_TYPE_LABELS),
+                index=list(backend.ERROR_TYPE_LABELS).index(draft.error_type)
+                if draft.error_type in backend.ERROR_TYPE_LABELS
+                else len(backend.ERROR_TYPE_LABELS) - 1,
+                format_func=lambda k: backend.ERROR_TYPE_LABELS[k],
+            )
+            difficulty = col_d.selectbox(
+                "难度",
+                options=list(backend.DIFFICULTY_LABELS),
+                index=list(backend.DIFFICULTY_LABELS).index(draft.difficulty)
+                if draft.difficulty in backend.DIFFICULTY_LABELS
+                else 1,
+                format_func=lambda k: backend.DIFFICULTY_LABELS[k],
+            )
+            if draft.new_concepts:
+                st.caption("模型建议新建的知识点（是否真建由 C₁ 的 find_or_create 查重后决定）：")
+                for concept in draft.new_concepts:
+                    st.caption(f"· {concept.get('name')} → {concept.get('chapter_id')}")
+            submitted = st.form_submit_button("确认入库")
 
     if submitted:
+        st.toast("表单已提交（本轮还没写库）", icon="🧪")
         st.info(
             "本轮是第 4 步：表单能改、能提交，但**还不会真的写库**。\n\n"
             "第 8 步接上 `backend.commit(draft)` 后，这里就是唯一的落库入口。"
@@ -331,7 +450,8 @@ def _recent_intake() -> None:
 # ============================================================
 def _tab_mastery() -> None:
     st.subheader("③ 掌握度分析")
-    st.caption("掌握度 = 基础正确率 × 难度加权 × 时间衰减；练过不足 3 次一律「样本不足」，不参与最薄弱排名")
+    st.caption("练过不足 3 次一律「样本不足」，不参与最薄弱排名")
+    st.latex(r"\text{掌握度}=\text{基础正确率}\ \times\ \text{难度加权}\ \times\ \text{时间衰减}\quad(\le 1.0)")
 
     try:
         df = backend.mastery_table()
@@ -354,11 +474,20 @@ def _tab_mastery() -> None:
     if missing_keys:
         st.error("summary_text() 缺键：" + "、".join(missing_keys))
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("知识点总数", summary.get("kp_total", 0))
-    c2.metric("错题总数", summary.get("wrong_total", 0))
-    c3.metric("未掌握", summary.get("weak_count", 0))
-    c4.metric("练习次数", summary.get("practice_total", 0))
+    cards = [
+        ("知识点总数", summary.get("kp_total", 0)),
+        ("错题总数", summary.get("wrong_total", 0)),
+        ("未掌握", summary.get("weak_count", 0)),
+        ("练习次数", summary.get("practice_total", 0)),
+    ]
+    animate = _first_time("metrics_animated")
+    for column, (label, value) in zip(st.columns(4), cards):
+        with column:
+            with st.container(border=True):
+                if animate:
+                    _count_up(st.empty(), label, int(value))
+                else:
+                    st.metric(label, int(value))
     st.caption(
         f"模型累计调用 {summary.get('llm_calls', 0)} 次 · "
         f"累计 token {summary.get('llm_tokens', 0)}"
@@ -366,16 +495,39 @@ def _tab_mastery() -> None:
 
     # 最薄弱：只在「未掌握 / 基本掌握」里挑掌握度最低的（样本不足不参与）
     candidates = df[df["status"].isin(["未掌握", "基本掌握"])].sort_values("mastery")
-    if len(candidates):
-        top = candidates.iloc[0]
-        st.info(f"当前最薄弱的知识点：**{top['kp_name']}**（{top['chapter_name']}，掌握度 {top['mastery']:.0%}）")
-    else:
-        st.info("暂时没有可排名的薄弱项 —— 先做几道练习。")
+    with st.container(border=True):
+        if len(candidates):
+            top = candidates.iloc[0]
+            st.markdown(f"**当前最薄弱**：{top['kp_name']}　·　{top['chapter_name']}")
+            st.progress(float(top["mastery"]), text=f"掌握度 {top['mastery']:.0%}")
+        else:
+            st.caption("暂时没有可排名的薄弱项 —— 先做几道练习。")
 
-    st.dataframe(df, hide_index=True)
+    view = df.assign(
+        状态=df["status"].map(STATUS_ICONS).fillna(df["status"]),
+        正确率= (df["correct_rate"] * 100).round(0),
+        掌握度= (df["mastery"] * 100).round(0),
+    )
+    st.dataframe(
+        view[["kp_name", "chapter_name", "attempts", "correct", "正确率", "掌握度", "状态"]],
+        hide_index=True,
+        column_config={
+            "kp_name": st.column_config.TextColumn("知识点", width="medium"),
+            "chapter_name": st.column_config.TextColumn("所属章节", width="medium"),
+            "attempts": st.column_config.NumberColumn("练习", width="small"),
+            "correct": st.column_config.NumberColumn("做对", width="small"),
+            "正确率": st.column_config.ProgressColumn(
+                "基础正确率", min_value=0, max_value=100, format="%d%%"
+            ),
+            "掌握度": st.column_config.ProgressColumn(
+                "掌握度", min_value=0, max_value=100, format="%d%%"
+            ),
+            "状态": st.column_config.TextColumn("状态", width="small"),
+        },
+    )
 
-    st.caption("各知识点基础正确率对比")
-    st.bar_chart(df.set_index("kp_name")[["correct_rate"]])
+    st.caption("各知识点基础正确率对比（%）")
+    st.bar_chart(view.set_index("kp_name")[["正确率"]])
 
 
 # ============================================================
@@ -394,6 +546,7 @@ def _tab_practice() -> None:
         st.session_state.practice_items = items
         st.session_state.practice_note = note
         st.session_state.practice_result = None
+        st.toast(f"已生成 {len(items)} 道题", icon="📐")
 
     items = st.session_state.practice_items
     if not items:
@@ -403,26 +556,29 @@ def _tab_practice() -> None:
     st.caption(st.session_state.practice_note)
     answers: dict[str, str] = {}
     for index, item in enumerate(items, start=1):
-        st.markdown(f"**{index}. {item.get('stem', '')}**")
-        if item.get("type") == "choice":
-            options = list(item.get("options") or {})
-            answers[item["id"]] = st.radio(
-                f"第 {index} 题",
-                options,
-                format_func=lambda key, opts=item["options"]: f"{key}. {opts[key]}",
-                key=f"choice_{item['id']}",
-                label_visibility="collapsed",
+        with st.container(border=True):
+            st.markdown(f"**{index}. {item.get('stem', '')}**")
+            if item.get("type") == "choice":
+                options = list(item.get("options") or {})
+                answers[item["id"]] = st.radio(
+                    f"第 {index} 题",
+                    options,
+                    format_func=lambda key, opts=item["options"]: f"{key}. {opts[key]}",
+                    key=f"choice_{item['id']}",
+                    label_visibility="collapsed",
+                )
+            elif item.get("type") == "fill":
+                answers[item["id"]] = st.text_input(
+                    f"第 {index} 题",
+                    key=f"fill_{item['id']}",
+                    label_visibility="collapsed",
+                    placeholder="填写答案，例如 x^2+C",
+                )
+            else:
+                st.warning(f"未知题型：{item.get('type')}（契约 v1 只支持 choice / fill）")
+            st.caption(
+                f"难度：{backend.DIFFICULTY_LABELS.get(item.get('difficulty'), item.get('difficulty'))}"
             )
-        elif item.get("type") == "fill":
-            answers[item["id"]] = st.text_input(
-                f"第 {index} 题",
-                key=f"fill_{item['id']}",
-                label_visibility="collapsed",
-                placeholder="填写答案，例如 x^2+C",
-            )
-        else:
-            st.warning(f"未知题型：{item.get('type')}（契约 v1 只支持 choice / fill）")
-        st.caption(f"难度：{backend.DIFFICULTY_LABELS.get(item.get('difficulty'), item.get('difficulty'))}")
 
     if st.button("提交并判分"):
         try:
@@ -430,6 +586,7 @@ def _tab_practice() -> None:
         except Exception as exc:  # noqa: BLE001
             st.error(f"判分失败：{exc}")
             return
+        st.toast("判分完成", icon="🎯")
 
     results = st.session_state.practice_result
     if not results:
@@ -450,9 +607,9 @@ def _tab_practice() -> None:
 def main() -> None:
     _init_state()
     _sidebar()
-
-    st.title("📘 学习辅导 AI 助教 · 高等数学")
-    st.caption("知识点问答 / 错题录入与归类 / 掌握度分析 / 针对性练习")
+    _hero()
+    _status_strip()
+    st.divider()
 
     status = backend.sources()
     if any(kind == "stub" for kind in status.values()):

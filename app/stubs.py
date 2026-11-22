@@ -124,11 +124,18 @@ def _real(module_name: str, func_name: str):
 
     三种情况要分清楚，因为处理方式完全不同：
       ① 模块文件还没写        → 正常（队友还没开工），不记录，回落桩
-      ② 模块存在但导入就炸     → 异常（多半是 from .prompts import X 拼错了），记录原因
+      ② 模块存在但导入就炸     → 异常，记录原因（ImportError、语法错误、顶层代码抛异常都算）
       ③ 模块能导入但没有这个函数 → 异常（签名/名字对不上），记录原因
 
-    🔴 只吞 ImportError/AttributeError。真实现的**运行期**异常照常向上抛 ——
-       否则真实报错也会被伪装成「桩在跑」。
+    🔴 这里兜的只是「导入」这一步，以及取函数那一步。
+       真实现的**运行期**异常（调用时抛的）一个字都不接，照常向上抛 ——
+       否则模型 401、SQL 写错也会被伪装成「桩在跑」，排障会往完全错误的方向找。
+
+    ⚠️ ② 用 `except Exception` 而不是只 `except ImportError`：语法错误（SyntaxError）、
+       模块顶层抛的 RuntimeError（例如 langchain 那类导入期报错）同样是「文件在但接不上」，
+       正是这套可观测性要报告的对象。只吞 ImportError 时它们会冲出 sources()，
+       把整页打成 traceback —— 那比「静默回落」更难解释。
+       注意兜的范围只有 import 这一步，函数被调用时的异常照旧上抛（见 🔴 上一条）。
     """
     if _MODE == "stub":
         return None
@@ -136,10 +143,10 @@ def _real(module_name: str, func_name: str):
     key = f"{module_name}.{func_name}"
     try:
         module = importlib.import_module(module_name)
-    except ImportError as exc:
+    except Exception as exc:  # noqa: BLE001 —— 只包住 import，见 docstring ②
         # find_spec 用来区分「文件不存在」和「文件在但导入失败」
-        if importlib.util.find_spec(module_name) is not None:
-            _FAILURES[key] = f"模块存在但导入失败：{exc}"
+        if _spec_exists(module_name):
+            _FAILURES[key] = f"模块存在但导入失败（{type(exc).__name__}）：{exc}"
         else:
             _FAILURES.pop(key, None)
         return None
@@ -151,6 +158,14 @@ def _real(module_name: str, func_name: str):
 
     _FAILURES.pop(key, None)  # 修好之后把旧记录清掉，别一直挂着红
     return fn
+
+
+def _spec_exists(module_name: str) -> bool:
+    """模块说明文件是否存在。find_spec 本身也可能抛异常（父包导入就炸时），这里一并兜住。"""
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:  # noqa: BLE001
+        return True  # 判定不了「没写」，就按「在但接不上」记录，宁可多报也不漏报
 
 
 #: 哪些函数归谁实现 —— 侧边栏据此显示「真 / 桩」，第 5 步同步契约第九节清单也靠它

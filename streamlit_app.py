@@ -196,7 +196,7 @@ def _status_strip() -> None:
     if read_error:
         st.error(
             "**门面状态读不出来**：" + read_error
-            + "\n\n这通常意味着某个模块在导入时就抛了非 ImportError 的异常（例如语法错误）。"
+            + "\n\n正常情况下导入期异常会被门面记成「接入异常」，能走到这里说明连 stubs 的兜底也失效了。"
         )
         return
 

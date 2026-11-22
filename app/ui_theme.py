@@ -165,13 +165,35 @@ hr{ border:none !important; border-top:var(--line) !important; margin:1rem 0 !im
   box-shadow: var(--shadow-sm) !important;
 }
 
-/* ---------- 进度条 ---------- */
-[data-testid="stProgress"] > div{
-  background: #E7DECB !important;
-  border:1px solid var(--ink) !important;
-  border-radius:2px !important; height:10px !important;
+/* ---------- 进度条（按 Streamlit 1.67 真实 DOM 精确命中） ----------
+   结构：stProgress
+           ├─ div（文字标签，StreamlitMarkdown）
+           └─ [role=progressbar] > [data-testid=stProgressBarTrack] > div（填充）
+   之前用 stProgress > div 泛匹配，把「文字块」也压成 10px 高并加上边框，
+   文字溢出到进度条里、又被填充块盖住 —— 这里只对轨道和填充生效。 */
+[data-testid="stProgress"]{ background: transparent !important; border:none !important; height:auto !important; }
+[data-testid="stProgress"] > div:first-child{
+  height:auto !important; background: transparent !important;
+  border:none !important; box-shadow:none !important;
+  padding:0 0 6px !important;
 }
-[data-testid="stProgress"] > div > div{
+[data-testid="stProgress"] p{
+  margin:0 !important; color: var(--ink) !important;
+  font-size:12px !important; line-height:1.45 !important; letter-spacing:.02em;
+}
+[data-testid="stProgress"] [role="progressbar"]{
+  background: transparent !important; border:none !important;
+  height:auto !important; padding:0 !important;
+}
+[data-testid="stProgressBarTrack"]{
+  background:#E7DECB !important;
+  border:1px solid var(--ink) !important;
+  border-radius:2px !important;
+  height:10px !important;
+  overflow:hidden !important;
+  box-shadow:none !important;
+}
+[data-testid="stProgressBarTrack"] > div{
   background: var(--mint) !important;
   border-right:1px solid var(--ink) !important;
   border-radius:0 !important;

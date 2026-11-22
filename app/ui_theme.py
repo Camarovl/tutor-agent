@@ -243,33 +243,90 @@ input::placeholder, textarea::placeholder{ color:#8C8477 !important; }
 /* 单选 */
 [data-testid="stRadio"] label{ font-weight:600 !important; color:var(--ink) !important; }
 
-/* ---------- 按钮 ---------- */
-[data-testid="stButton"] button, [data-testid="stBaseButton-secondary"]{
-  background: var(--card) !important;
+/* ---------- 按钮：多色，文字始终墨色（不被底色影响） ---------- */
+/* 1) 次级按钮（如「提交并判分」）：雾蓝 */
+[data-testid="stButton"] button,
+[data-testid="stBaseButton-secondary"]{
+  background: var(--blue) !important;
   border: var(--line) !important;
   border-radius:4px !important;
-  color: var(--ink) !important;
   font-weight:700 !important;
   box-shadow: var(--shadow-sm) !important;
   transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
-[data-testid="stButton"] button:hover{ background: var(--hilite) !important; }
-[data-testid="stButton"] button:active{
-  transform: translate(2px,2px); box-shadow: 1px 1px 0 var(--ink) !important;
-}
+[data-testid="stButton"] button:hover,
+[data-testid="stBaseButton-secondary"]:hover{ background:#C9DDEF !important; }
+
+/* 2) 主按钮（「识别并归类」「生成一组练习」）：薄荷 */
 [data-testid="stBaseButton-primary"]{
   background: var(--mint) !important;
   border: var(--line) !important;
   border-radius:4px !important;
-  color: var(--ink) !important;
   font-weight:800 !important;
   box-shadow: var(--shadow-sm) !important;
+  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
+[data-testid="stBaseButton-primary"]:hover{ background:#CBE2CD !important; }
+
+/* 3) 表单提交（「确认入库」）：卡其 */
 [data-testid="stFormSubmitButton"] button{
   background: var(--tan) !important;
   border: var(--line) !important; border-radius:4px !important;
-  color:var(--ink) !important; font-weight:800 !important;
+  font-weight:800 !important;
   box-shadow: var(--shadow-sm) !important;
+  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+[data-testid="stFormSubmitButton"] button:hover{ background:#EBD5AE !important; }
+
+/* 4) 侧边栏按钮（「清空对话」）：干枯玫瑰粉 */
+[data-testid="stSidebar"] [data-testid="stButton"] button{
+  background: var(--pink) !important;
+  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+[data-testid="stSidebar"] [data-testid="stButton"] button:hover{ background:#F0CBCB !important; }
+
+/* 5) ④ 页的「生成一组练习」再单独一色（淡紫）—— 选择器只在本页命中，
+      没命中时会回落到上面的薄荷，不影响可读性 */
+[data-testid="stTabs"] [role="tabpanel"]:nth-of-type(4) [data-testid="stBaseButton-primary"]{
+  background:#E8E0F0 !important;
+}
+[data-testid="stTabs"] [role="tabpanel"]:nth-of-type(4) [data-testid="stBaseButton-primary"]:hover{
+  background:#DED4EA !important;
+}
+
+/* 按下：所有按钮一起位移收影 */
+[data-testid="stButton"] button:active,
+[data-testid="stBaseButton-primary"]:active,
+[data-testid="stFormSubmitButton"] button:active{
+  transform: translate(2px,2px) !important;
+  box-shadow: 1px 1px 0 var(--ink) !important;
+}
+
+/* 文字：正常 / 悬停 / 按下 / 聚焦 / 禁用，一律墨色，不被任何底色带走 */
+[data-testid="stButton"] button,
+[data-testid="stButton"] button *,
+[data-testid="stBaseButton-primary"],
+[data-testid="stBaseButton-primary"] *,
+[data-testid="stBaseButton-secondary"],
+[data-testid="stBaseButton-secondary"] *,
+[data-testid="stFormSubmitButton"] button,
+[data-testid="stFormSubmitButton"] button *{
+  color: var(--ink) !important;
+  -webkit-text-fill-color: var(--ink) !important;
+  opacity: 1 !important;
+}
+[data-testid="stButton"] button svg,
+[data-testid="stBaseButton-primary"] svg,
+[data-testid="stFormSubmitButton"] button svg{ stroke: var(--ink) !important; }
+
+/* 禁用态：底色变淡、边框虚线，文字仍是完整墨色 */
+[data-testid="stButton"] button:disabled,
+[data-testid="stBaseButton-primary"]:disabled,
+[data-testid="stFormSubmitButton"] button:disabled{
+  background: #EFE9DA !important;
+  border-style: dashed !important;
+  box-shadow:none !important;
+  cursor:not-allowed;
 }
 
 /* ---------- 对话 ---------- */

@@ -103,46 +103,64 @@ def seed_chapters() -> int:
 # ============================================================
 # 步骤 3：演示数据
 # ============================================================
-def seed_demo() -> bool:
-    """knowledge_point 为空时灌入演示数据；已有知识点就跳过。返回是否执行。"""
+def seed_demo() -> tuple[int, int]:
+    """knowledge_point 为空时灌入演示数据；已有知识点就跳过。
+
+    返回 (成功条数, 失败条数)。
+    单条失败不打断整批：一条错题写不进去，不该让另外两条也白跑 ——
+    但失败必须计数并在结尾报出来，不能"看起来成功"。
+    """
     existing = db.list_kps()
     if existing:
         print(f"· 演示数据：库里已有 {len(existing)} 个知识点，跳过（不覆盖真实记录）")
-        return False
+        return 0, 0
 
+    ok = failed = 0
     for item in DEMO_WRONG_QUESTIONS:
         kp_name, chapter_id = item["kp"]
+        try:
+            # 🔴 走查重路径：命中已有条目就复用，没命中才在章节下新建
+            kp_id = knowledge.find_or_create(kp_name, chapter_id, context=None)
+        except ValueError as exc:
+            # 章节 id 不在候选集里、或名字为空 —— 章节没灌成功时最可能撞这个
+            print(f"  ✗ 「{kp_name}」跳过：{exc}")
+            failed += 1
+            continue
 
-        # 🔴 走查重路径：命中已有条目就复用，没命中才在章节下新建
-        kp_id = knowledge.find_or_create(kp_name, chapter_id, context=None)
-
-        wq_id = db.insert_wrong_question(
-            {
-                "question_text": item["question_text"],
-                "student_answer": item["student_answer"],
-                "correct_answer": item["correct_answer"],
-                "solution_steps": item["solution_steps"],
-                "error_type": item["error_type"],
-                "difficulty": item["difficulty"],
-                "source": "text",
-                "kp_ids": [kp_id],
-            }
-        )
-
-        total, correct = item["practice"]
-        for index in range(total):
-            db.log_practice(
-                kp_id,
-                is_correct=index < correct,
-                question_ref=f"seed_wq_{wq_id}",
-                difficulty=item["difficulty"],
+        try:
+            wq_id = db.insert_wrong_question(
+                {
+                    "question_text": item["question_text"],
+                    "student_answer": item["student_answer"],
+                    "correct_answer": item["correct_answer"],
+                    "solution_steps": item["solution_steps"],
+                    "error_type": item["error_type"],
+                    "difficulty": item["difficulty"],
+                    "source": "text",
+                    "kp_ids": [kp_id],
+                }
             )
+
+            total, correct = item["practice"]
+            for index in range(total):
+                db.log_practice(
+                    kp_id,
+                    is_correct=index < correct,
+                    question_ref=f"seed_wq_{wq_id}",
+                    difficulty=item["difficulty"],
+                )
+        except sqlite3.DatabaseError as exc:
+            print(f"  ✗ 「{kp_name}」写库失败：{exc}")
+            failed += 1
+            continue
 
         print(
             f"· 错题 #{wq_id} → 知识点「{kp_name}」({chapter_id})，"
             f"练习 {total} 次（对 {correct} 次）"
         )
-    return True
+        ok += 1
+
+    return ok, failed
 
 
 # ============================================================
@@ -198,12 +216,19 @@ def main() -> int:
     print("建库与灌数据：")
     try:
         db.init_db()
-        print("· 表结构：就绪（schema.sql，幂等）")
+    except FileNotFoundError:
+        print("❌ 找不到 schema.sql —— 请确认在仓库根目录运行本脚本（不是 app/ 或 data/ 里）。")
+        return 1
+    except sqlite3.DatabaseError as exc:
+        print(f"❌ 建表失败：{exc}")
+        return 1
+    print("· 表结构：就绪（schema.sql，幂等）")
 
+    try:
         seed_chapters()
         if db.chapter_rows() and db.list_kps():
             print("· 提示：库里已有知识点；要重灌章节请先删掉 data/app.db 再跑一遍")
-        seed_demo()
+        ok, failed = seed_demo()
     except sqlite3.DatabaseError as exc:
         print(f"\n❌ 数据库操作失败：{exc}")
         print("  如果提示 FOREIGN KEY constraint failed，说明库里已有知识点而章节被重灌，")
@@ -211,6 +236,9 @@ def main() -> int:
         return 1
 
     print_summary()
+    if failed:
+        print(f"❌ 有 {failed} 条演示数据没写进去（见上面 ✗ 开头的行），本次不算成功。")
+        return 1
     print("完成。下一步：streamlit run streamlit_app.py")
     return 0
 

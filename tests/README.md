@@ -19,8 +19,10 @@
 **已覆盖（第 5、7、8、9 步）**
 
 - **数据文件**：`data/chapters.json` 的 15 个归类抽屉、`data/question_bank.json` 的题目结构
-- **建表与连接**：`schema.sql` 六张表、每个连接的外键开关、`data/app.db` 可读
-- **数据一致性**：数据库章节与 `chapters.json` 一致、各表条数
+- **干净 clone**：没有 `data/app.db` 时自动建临时库；真实库一致性项标 ⏭ 跳过，退出码 0；
+  跑过 `seed_data.py` 后再跑，这些项变 ✅
+- **建表与连接**：`schema.sql` 六张表、每个连接的外键开关；`data/app.db` 存在时可读
+- **数据一致性**：真实库存在时，章节与 `chapters.json` 一致、各表条数
 - **孤儿引用**：`PRAGMA foreign_key_check` + 题库 `kp_ids` 是否都能在数据库找到
 - **知识点**：只统计运行时生成的知识点，不检查预置知识点文件（设计如此）
 - **错题抽取校验器**：`docs/interfaces.md` 第六节 9 条拦截项全覆盖，

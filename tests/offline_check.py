@@ -6,14 +6,12 @@
 
     python tests/offline_check.py
 
-覆盖范围（第 5 步初版 + 第 7 步校验器 + 第 8 步降级/落库原型）：
+覆盖范围（第 5 步初版 + 第 7 步校验器 + 第 8 步降级/落库原型 + 第 9 步统计/练习）：
 
     □ 知识框架数据 data/chapters.json 能加载、条数与 id 规范
     □ 题库数据 data/question_bank.json 能加载、结构/章节引用合法
     □ schema.sql 能建出六张表，且每个连接的外键开关真的生效
-    □ 本地 data/app.db 能连上、表齐全、章节与数据文件一致
-    □ 数据库里没有指向不存在记录的孤儿引用（外键完整性）
-    □ 题库里的 kp_id 都能在数据库中找到
+    □ 真实 data/app.db 存在时：表齐全、章节一致、无孤儿引用、题库引用能找到
     □ 错题抽取校验器：非法 JSON/缺字段/越界 id/错误枚举/越界 confidence 都被拦住
     □ 未配置密钥：明确列出缺项，is_configured() 为 False，且不抛异常
     □ 降级链路：假模型连续失败 → 带原因重试 2 次 → 降级（并验证第 2 次成功即采用）
@@ -22,7 +20,12 @@
     □ 练习校验器：题型/选项/答案/kp_ids/章节/难度
     □ 指标卡/出题/判分/回写：summary_text 6 键、题库选池、grade、record_result
 
-输出每项一行 ✅/❌，最后一行总计；有任何失败退出码非 0。
+输出每项一行 ✅/❌/⏭，最后一行总计；有真实失败退出码非 0，跳过不算失败。
+
+🟢 干净 clone（没有 data/app.db）也能跑：
+    脚本在 data/_offline_work_<pid>.db 建临时库，所有业务/校验测试都在临时库上跑；
+    只依赖真实库的一致性检查标 ⏭ 跳过并打印原因。跑过 seed_data.py 后再跑，这些项变 ✅。
+    🔴 自检不会写 data/app.db，只读它；临时库跑完删除。
 
 🔴 本项目没有「知识点数据文件」—— 知识点是运行时从真实错题里长出来的
 （AGENTS.md 红线 6）。这里检查的是章节抽屉（data/chapters.json）、题库，
@@ -79,11 +82,16 @@ class Report:
     def __init__(self) -> None:
         self.passed = 0
         self.failed = 0
+        self.skipped = 0
         self._first_failure = ""
 
     def ok(self, message: str) -> None:
         print(f"✅ {message}")
         self.passed += 1
+
+    def skip(self, message: str, reason: str = "") -> None:
+        print(f"⏭ {message}" + (f"（{reason}）" if reason else ""))
+        self.skipped += 1
 
     def fail(self, message: str, detail: str = "") -> None:
         print(f"❌ {message}")
@@ -95,13 +103,22 @@ class Report:
         self.failed += 1
 
     def summary(self) -> int:
-        total = self.passed + self.failed
+        total = self.passed + self.failed + self.skipped
         print("-" * 60)
         if self.failed:
             if self._first_failure:
                 print(f"第一处失败：{self._first_failure}")
-            print(f"总计：{total} 项，通过 {self.passed} 项，失败 {self.failed} 项")
+            print(
+                f"总计：{total} 项，通过 {self.passed} 项，"
+                f"跳过 {self.skipped} 项，失败 {self.failed} 项"
+            )
             return 1
+        if self.skipped:
+            print(
+                f"总计：{total} 项，通过 {self.passed} 项，"
+                f"跳过 {self.skipped} 项，失败 0 项"
+            )
+            return 0
         print(f"总计：{total} 项，全部通过")
         return 0
 
@@ -1180,13 +1197,25 @@ def check_schema(report: Report) -> None:
 # 本地数据库
 # ============================================================
 def check_database(report: Report, chapters: list[dict] | None, bank: list[dict] | None) -> None:
-    """检查 data/app.db：能连上、表齐全、章节一致、没有孤儿引用、题库引用都能找到。"""
+    """检查 data/app.db：能连上、表齐全、章节一致、没有孤儿引用、题库引用都能找到。
+
+    干净 clone 没有 data/app.db 时，这一组“真实数据”检查全部标 ⏭ 跳过，
+    不静默当通过、也不删检查项；跑过 seed_data.py 后再变成 ✅。
+    """
     db_path = DATA_DIR / "app.db"
+    labels = (
+        "数据库：连接成功，六张表齐全",
+        "数据库内容",
+        "知识点（运行时生成）",
+        "章节一致性",
+        "外键完整性",
+        "题库知识点引用",
+    )
+
     if not db_path.exists():
-        report.fail(
-            "数据库：找不到 data/app.db",
-            "先运行 python seed_data.py 建库灌数据，再跑本脚本",
-        )
+        reason = "data/app.db 不存在（干净 clone，未跑 seed_data.py）"
+        for label in labels:
+            report.skip(label, reason)
         return
 
     try:
@@ -1202,9 +1231,12 @@ def check_database(report: Report, chapters: list[dict] | None, bank: list[dict]
         table_names = {row[0] for row in table_rows}
         missing = EXPECTED_TABLES - table_names
         if missing:
-            report.fail("数据库：表不齐", "、".join(sorted(missing)))
-        else:
-            report.ok("数据库：连接成功，六张表齐全")
+            reason = "真实库尚未初始化（缺表：" + "、".join(sorted(missing)) + "）"
+            for label in labels:
+                report.skip(label, reason)
+            return
+
+        report.ok(labels[0])
 
         counts = {}
         for table in ("chapter", "knowledge_point", "wrong_question", "wq_kp", "practice_log", "llm_log"):
@@ -1224,18 +1256,27 @@ def check_database(report: Report, chapters: list[dict] | None, bank: list[dict]
         )
 
         if chapters is not None:
-            db_chapters = {
-                row[0] for row in conn.execute("SELECT id FROM chapter").fetchall()
-            }
-            file_chapters = {c["id"] for c in chapters}
-            if db_chapters != file_chapters:
-                report.fail(
-                    "章节一致性：数据库与 data/chapters.json 不一致",
-                    f"库中独有：{sorted(db_chapters - file_chapters) or '无'}；"
-                    f"文件独有：{sorted(file_chapters - db_chapters) or '无'}",
-                )
+            if counts["chapter"] == 0:
+                report.skip(labels[3], "真实库还没有章节（未跑 seed_data.py）")
             else:
-                report.ok("章节一致性：数据库与 data/chapters.json 一致")
+                db_chapters = {
+                    row[0] for row in conn.execute("SELECT id FROM chapter").fetchall()
+                }
+                file_chapters = {c["id"] for c in chapters}
+                if db_chapters != file_chapters:
+                    report.fail(
+                        "章节一致性：数据库与 data/chapters.json 不一致",
+                        f"库中独有：{sorted(db_chapters - file_chapters) or '无'}；"
+                        f"文件独有：{sorted(file_chapters - db_chapters) or '无'}",
+                    )
+                else:
+                    report.ok("章节一致性：数据库与 data/chapters.json 一致")
+
+        empty = counts["chapter"] == 0 and counts["knowledge_point"] == 0
+        if empty:
+            report.skip(labels[4], "真实库为空，无引用可查")
+            report.skip(labels[5], "真实库为空，无知识点可对照")
+            return
 
         orphans = conn.execute("PRAGMA foreign_key_check").fetchall()
         if orphans:
@@ -1246,7 +1287,11 @@ def check_database(report: Report, chapters: list[dict] | None, bank: list[dict]
         else:
             report.ok("外键完整性：没有孤儿引用")
 
-        if bank is not None:
+        if bank is None:
+            report.skip(labels[5], "题库数据无效，无法对照")
+        elif counts["knowledge_point"] == 0:
+            report.skip(labels[5], "真实库还没有知识点（未跑 seed_data.py）")
+        else:
             kp_ids = {
                 row[0] for row in conn.execute("SELECT id FROM knowledge_point").fetchall()
             }
@@ -1273,24 +1318,66 @@ def check_database(report: Report, chapters: list[dict] | None, bank: list[dict]
 # ============================================================
 # 入口
 # ============================================================
+def _seed_temp_kps(bank: list[dict] | None) -> None:
+    """给临时库灌入题库引用到的知识点，保证出题/校验测试不依赖 data/app.db。"""
+    if not bank:
+        return
+    for item in bank:
+        if not isinstance(item, dict):
+            continue
+        chapter_id = item.get("chapter_id")
+        if not isinstance(chapter_id, str) or not chapter_id:
+            continue
+        for kp_id in item.get("kp_ids") or []:
+            if not isinstance(kp_id, str) or not kp_id.startswith("kp_"):
+                continue
+            name = kp_id[3:].strip()
+            if not name:
+                continue
+            try:
+                db.insert_kp(kp_id, name, chapter_id, None, "offline-check")
+            except sqlite3.IntegrityError:
+                # 已经存在（题库多题共用一个知识点）就跳过
+                continue
+
+
 def main() -> int:
     report = Report()
     print("🔎 学习辅导 AI 助教 · 离线自检")
     print("=" * 60)
 
-    chapters = load_chapters(report)
-    bank = load_question_bank(report, chapters)
-    check_validators(report, chapters)
-    check_config(report)
-    check_retry_chain(report, chapters)
-    check_insert_prototype(report, chapters)
-    check_mastery(report, chapters)
-    check_practice_validator(report, chapters)
-    check_profile_flow(report, chapters)
-    check_schema(report)
-    check_database(report, chapters, bank)
+    original_db_path = db.DB_PATH
+    work_path = DATA_DIR / f"_offline_work_{os.getpid()}.db"
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        work_path.unlink(missing_ok=True)
+        db.DB_PATH = work_path
+        db.init_db()
 
-    return report.summary()
+        chapters = load_chapters(report)
+        bank = load_question_bank(report, chapters)
+        if chapters:
+            db.insert_chapters(chapters)
+        _seed_temp_kps(bank)
+
+        check_validators(report, chapters)
+        check_config(report)
+        check_retry_chain(report, chapters)
+        check_insert_prototype(report, chapters)
+        check_mastery(report, chapters)
+        check_practice_validator(report, chapters)
+        check_profile_flow(report, chapters)
+        check_schema(report)
+        check_database(report, chapters, bank)
+
+        return report.summary()
+    except Exception as exc:  # noqa: BLE001 —— 临时库准备失败也要给出可读结果
+        report.fail("临时库：准备失败", f"{type(exc).__name__}: {exc}")
+        return report.summary()
+    finally:
+        db.DB_PATH = original_db_path
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            Path(str(work_path) + suffix).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

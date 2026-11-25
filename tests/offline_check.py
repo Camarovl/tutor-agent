@@ -15,6 +15,7 @@
     □ 数据库里没有指向不存在记录的孤儿引用（外键完整性）
     □ 题库里的 kp_id 都能在数据库中找到
     □ 错题抽取校验器：非法 JSON/缺字段/越界 id/错误枚举/越界 confidence 都被拦住
+    □ 未配置密钥：明确列出缺项，is_configured() 为 False，且不抛异常
 
 输出每项一行 ✅/❌，最后一行总计；有任何失败退出码非 0。
 
@@ -272,6 +273,7 @@ def check_validators(report: Report, chapters: list[dict] | None) -> None:
     missing_payload.pop("confidence")
     missing_payload.pop("error_type")
 
+    # 与 docs/interfaces.md 第六节逐条对应：9 条拦截项 + 6 个类型/正向用例。
     cases = [
         ("合法草稿", dict(base), None),
         ("不是 JSON 对象", ["not", "a", "dict"], ("JSON 对象",)),
@@ -361,6 +363,59 @@ def check_validators(report: Report, chapters: list[dict] | None) -> None:
     else:
         report.ok(
             f"校验器：{len(cases)} 个用例全部符合预期（拦截 + 错误原因）"
+        )
+
+
+# ============================================================
+# 未配置密钥（不联网，只检查配置读取）
+# ============================================================
+def check_config(report: Report) -> None:
+    """三项必填清空时，配置检查要明确列出缺项且不抛异常。
+
+    当前 main 只有 app/stubs.py 的配置读取；B 的 llm_client 合并后自动切到它，
+    两边都有 missing_config_keys() / is_configured()。
+    """
+    import os
+    from unittest.mock import patch
+
+    required = ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL")
+    try:
+        from app import stubs
+    except Exception as exc:  # noqa: BLE001
+        report.fail("配置缺失：无法导入 app/stubs.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    source = stubs
+    source_name = "stubs"
+    try:
+        from app import llm_client  # 可选：feature/B 合并后才存在
+        if callable(getattr(llm_client, "missing_config_keys", None)):
+            source = llm_client
+            source_name = "llm_client"
+    except Exception:  # noqa: BLE001 —— 模块还没合并时正常回落
+        pass
+
+    with patch.dict(os.environ, {key: "" for key in required}):
+        try:
+            missing = list(source.missing_config_keys())
+            configured = bool(source.is_configured())
+        except Exception as exc:  # noqa: BLE001
+            report.fail(
+                f"配置缺失：{source_name} 检查时抛异常（应当返回缺项）",
+                f"{type(exc).__name__}: {exc}",
+            )
+            return
+
+    if set(missing) != set(required):
+        report.fail(
+            f"配置缺失：{source_name} 返回的缺项与预期不符",
+            f"预期 {list(required)}，实际 {missing}",
+        )
+    elif configured:
+        report.fail(f"配置缺失：{source_name} 在缺三项时仍报告 is_configured()=True")
+    else:
+        report.ok(
+            f"配置缺失：{source_name} 返回三项缺项且 is_configured()=False（未抛异常）"
         )
 
 
@@ -507,6 +562,7 @@ def main() -> int:
     chapters = load_chapters(report)
     bank = load_question_bank(report, chapters)
     check_validators(report, chapters)
+    check_config(report)
     check_schema(report)
     check_database(report, chapters, bank)
 

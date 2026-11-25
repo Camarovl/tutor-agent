@@ -6,7 +6,7 @@
 
     python tests/offline_check.py
 
-覆盖范围（第 5 步初版 + 第 7 步校验器）：
+覆盖范围（第 5 步初版 + 第 7 步校验器 + 第 8 步降级/落库原型）：
 
     □ 知识框架数据 data/chapters.json 能加载、条数与 id 规范
     □ 题库数据 data/question_bank.json 能加载、结构/章节引用合法
@@ -16,6 +16,8 @@
     □ 题库里的 kp_id 都能在数据库中找到
     □ 错题抽取校验器：非法 JSON/缺字段/越界 id/错误枚举/越界 confidence 都被拦住
     □ 未配置密钥：明确列出缺项，is_configured() 为 False，且不抛异常
+    □ 降级链路：假模型连续失败 → 带原因重试 2 次 → 降级（并验证第 2 次成功即采用）
+    □ 落库原型：已有 id 过滤、new_concepts 查重、非法章节/ID 丢弃后写入临时库
 
 输出每项一行 ✅/❌，最后一行总计；有任何失败退出码非 0。
 
@@ -420,6 +422,257 @@ def check_config(report: Report) -> None:
 
 
 # ============================================================
+# 降级链路（用假模型模拟 B 的 llm_client.chat 重试行为）
+# ============================================================
+def _run_retry_chain(generate, validator, max_retry: int = 2, label: str = "") -> dict:
+    """模拟 chat(validator=..., max_retry=2) 的重试语义。
+
+    每次失败都把 validator 返回的原因交给下一次 generate（对应生产里
+    把错误原因追加进 messages）；连续 max_retry 次仍失败就返回降级结果。
+    这只是测试替身，生产重试以 B 的 llm_client.chat 为准。
+    """
+    reasons: list[str] = []
+    for attempt in range(max_retry + 1):
+        last_reason = reasons[-1] if reasons else None
+        raw = generate(attempt, last_reason)
+        problem = validator(raw)
+        if problem is None:
+            print(f"   [{label}] 第 {attempt + 1} 次通过 → 采用")
+            return {
+                "ok": True,
+                "data": raw,
+                "attempts": attempt + 1,
+                "reasons": reasons,
+                "degraded": False,
+            }
+
+        reasons.append(problem)
+        if attempt < max_retry:
+            print(f"   [{label}] 第 {attempt + 1} 次校验失败：{problem}")
+            print(f"   [{label}] → 回喂原因，开始第 {attempt + 2} 次")
+        else:
+            print(f"   [{label}] 第 {attempt + 1} 次校验失败：{problem} → 降级")
+
+    return {
+        "ok": False,
+        "data": None,
+        "attempts": max_retry + 1,
+        "reasons": reasons,
+        "degraded": True,
+    }
+
+
+def check_retry_chain(report: Report, chapters: list[dict] | None) -> None:
+    """验证「失败 → 带原因重试 2 次 → 降级」和「第 2 次成功即采用」。"""
+    try:
+        from app import schemas
+    except Exception as exc:  # noqa: BLE001
+        report.fail("降级链路：无法导入 app/schemas.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    allowed_kps = ["kp_a"]
+    allowed_chapters = (
+        [chapter["id"] for chapter in chapters]
+        if chapters
+        else ["ch_function_limit"]
+    )
+    try:
+        validate = schemas.make_intake_validator(allowed_kps, allowed_chapters)
+    except Exception as exc:  # noqa: BLE001
+        report.fail("降级链路：构造校验器失败", f"{type(exc).__name__}: {exc}")
+        return
+
+    valid = {
+        "question_text": "求极限",
+        "student_answer": "1",
+        "correct_answer": "3",
+        "solution_steps": ["步骤一"],
+        "knowledge_ids": ["kp_a"],
+        "new_concepts": [],
+        "difficulty": "easy",
+        "error_type": "method_wrong",
+        "confidence": 0.82,
+    }
+    missing = dict(valid)
+    missing.pop("error_type")
+    missing.pop("confidence")
+
+    degrade_calls: list[tuple[int, str | None]] = []
+
+    def degrade_generate(attempt: int, last_reason: str | None):
+        degrade_calls.append((attempt, last_reason))
+        if attempt == 0:
+            return missing
+        return {**valid, "knowledge_ids": ["kp_not_exist"]}
+
+    try:
+        degraded = _run_retry_chain(degrade_generate, validate, label="降级")
+    except Exception as exc:  # noqa: BLE001
+        report.fail("降级链路：降级用例抛异常", f"{type(exc).__name__}: {exc}")
+        return
+
+    problems: list[str] = []
+    if degraded["ok"] or not degraded["degraded"]:
+        problems.append(f"连续失败后应降级，实际 ok={degraded['ok']}")
+    if degraded["attempts"] != 3:
+        problems.append(f"应调用 3 次（首发 + 2 次重试），实际 {degraded['attempts']}")
+    if len(degraded["reasons"]) != 3:
+        problems.append(f"应记录 3 条失败原因，实际 {len(degraded['reasons'])}")
+    if len(degrade_calls) != 3:
+        problems.append(f"应调用假模型 3 次，实际 {len(degrade_calls)}")
+    else:
+        if not degrade_calls[1][1] or "缺少必填字段" not in degrade_calls[1][1]:
+            problems.append(f"第 2 次没有收到第 1 次的原因：{degrade_calls[1][1]!r}")
+        if not degrade_calls[2][1] or "knowledge_ids" not in degrade_calls[2][1]:
+            problems.append(f"第 3 次没有收到第 2 次的原因：{degrade_calls[2][1]!r}")
+
+    success_calls: list[tuple[int, str | None]] = []
+
+    def recover_generate(attempt: int, last_reason: str | None):
+        success_calls.append((attempt, last_reason))
+        return missing if attempt == 0 else dict(valid)
+
+    try:
+        recovered = _run_retry_chain(recover_generate, validate, label="恢复")
+    except Exception as exc:  # noqa: BLE001
+        report.fail("降级链路：成功用例抛异常", f"{type(exc).__name__}: {exc}")
+        return
+
+    if not recovered["ok"] or recovered["degraded"]:
+        problems.append(f"第 2 次合格时应采用，实际 ok={recovered['ok']}")
+    if recovered["attempts"] != 2:
+        problems.append(f"成功用例应调用 2 次，实际 {recovered['attempts']}")
+    if len(recovered["reasons"]) != 1:
+        problems.append(f"成功用例应记录 1 条原因，实际 {len(recovered['reasons'])}")
+    if len(success_calls) != 2 or not success_calls[1][1]:
+        problems.append("成功用例的第 2 次没有收到第 1 次的原因")
+    elif "缺少必填字段" not in success_calls[1][1]:
+        problems.append(f"成功用例回喂的原因不对：{success_calls[1][1]!r}")
+
+    if problems:
+        report.fail(f"降级链路：{len(problems)} 处不符合预期", "\n".join(problems))
+    else:
+        report.ok("降级链路：3 次调用后降级，2 条原因均已回喂")
+        report.ok("降级链路：第 1 次失败后带原因重试，第 2 次通过即采用")
+
+
+# ============================================================
+# 落库原型（不改 db.py / intake.py，用临时库验证三步解析逻辑）
+# ============================================================
+def check_insert_prototype(report: Report, chapters: list[dict] | None) -> None:
+    """验证给 B/C₁ 的补丁方案：已有 id 过滤、new_concepts 查重、非法项丢弃。
+
+    生产落点应由 B 的 intake.commit() 采用这段 resolve 逻辑；本测试只在临时库里
+    调用现成的 db.insert_wrong_question()，不改任何队友文件。
+    """
+    if not chapters:
+        report.fail("落库原型：缺少章节数据，无法测试")
+        return
+    try:
+        from app import knowledge
+    except Exception as exc:  # noqa: BLE001
+        report.fail("落库原型：无法导入 app/knowledge.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    original_path = db.DB_PATH
+    temp_path = DATA_DIR / f"_offline_insert_{os.getpid()}.db"
+    try:
+        temp_path.unlink(missing_ok=True)
+        db.DB_PATH = temp_path
+        db.init_db()
+        db.insert_chapters(chapters)
+        existing_id = knowledge.find_or_create(
+            "原型已有知识点", chapters[0]["id"], context=None
+        )
+
+        def resolve(data: dict) -> list[str]:
+            """三步：已有 id 过滤 → new_concepts 查重 → 非法项丢弃。"""
+            existing = {row["id"] for row in db.list_kps()}
+            resolved: list[str] = []
+
+            for kp_id in data.get("knowledge_ids") or []:
+                if (
+                    isinstance(kp_id, str)
+                    and kp_id in existing
+                    and kp_id not in resolved
+                ):
+                    resolved.append(kp_id)
+
+            for concept in data.get("new_concepts") or []:
+                if not isinstance(concept, dict):
+                    continue
+                name = concept.get("name")
+                chapter_id = concept.get("chapter_id")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                if not isinstance(chapter_id, str) or not chapter_id.strip():
+                    continue
+                try:
+                    kp_id = knowledge.find_or_create(name, chapter_id, context=None)
+                except ValueError:
+                    # 越界 chapter_id / 空名字：丢弃，不阻断整条入库
+                    continue
+                if kp_id not in resolved:
+                    resolved.append(kp_id)
+
+            return resolved
+
+        data = {
+            "question_text": "原型题目",
+            "student_answer": "1",
+            "correct_answer": "3",
+            "solution_steps": ["步骤一"],
+            "error_type": "method_wrong",
+            "difficulty": "easy",
+            "source": "text",
+            "knowledge_ids": [existing_id, "kp_missing", existing_id],
+            "new_concepts": [
+                {"name": "原型新知识点", "chapter_id": chapters[0]["id"]},
+                {"name": "原型越界知识点", "chapter_id": "ch_not_exist"},
+                {"name": "", "chapter_id": chapters[0]["id"]},
+                "不是对象",
+            ],
+        }
+        resolved = resolve(data)
+        wq_id = db.insert_wrong_question({**data, "kp_ids": resolved})
+        recent = db.recent_wrong_questions(1)
+
+        problems: list[str] = []
+        if wq_id <= 0:
+            problems.append(f"insert_wrong_question 返回了非法 id：{wq_id}")
+        if len(resolved) != 2 or existing_id not in resolved:
+            problems.append(f"解析结果应为 2 个 kp_id（含已有 id），实际 {resolved}")
+        if "kp_missing" in resolved:
+            problems.append("非法已有 id 没被丢弃")
+        if not recent or recent[0]["question_text"] != "原型题目":
+            problems.append("临时库里没有查到刚写入的错题")
+        elif len(recent[0]["knowledge_points"]) != 2:
+            problems.append(
+                "wq_kp 关联数应为 2，实际 "
+                f"{len(recent[0]['knowledge_points'])}"
+            )
+        kp_names = {row["name"] for row in db.list_kps()}
+        if "原型新知识点" not in kp_names:
+            problems.append("合法的 new_concept 没有长成知识点")
+        if "原型越界知识点" in kp_names:
+            problems.append("越界 chapter_id 的新概念被错误创建")
+
+        if problems:
+            report.fail(f"落库原型：{len(problems)} 处不符合预期", "\n".join(problems))
+        else:
+            report.ok(
+                "落库原型：非法 id 丢弃、new_concepts 查重、越界章节丢弃，"
+                f"错题 #{wq_id} 入库并挂 2 个知识点"
+            )
+    except Exception as exc:  # noqa: BLE001
+        report.fail("落库原型：执行失败", f"{type(exc).__name__}: {exc}")
+    finally:
+        db.DB_PATH = original_path
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            Path(str(temp_path) + suffix).unlink(missing_ok=True)
+
+
+# ============================================================
 # 建表脚本（用临时库，不碰 data/app.db）
 # ============================================================
 def check_schema(report: Report) -> None:
@@ -563,6 +816,8 @@ def main() -> int:
     bank = load_question_bank(report, chapters)
     check_validators(report, chapters)
     check_config(report)
+    check_retry_chain(report, chapters)
+    check_insert_prototype(report, chapters)
     check_schema(report)
     check_database(report, chapters, bank)
 

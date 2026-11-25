@@ -18,6 +18,7 @@
     □ 未配置密钥：明确列出缺项，is_configured() 为 False，且不抛异常
     □ 降级链路：假模型连续失败 → 带原因重试 2 次 → 降级（并验证第 2 次成功即采用）
     □ 落库原型：已有 id 过滤、new_concepts 查重、非法章节/ID 丢弃后写入临时库
+    □ 掌握度：LEFT JOIN 全量、三因子、最终封顶、四档、排序、weak_points
 
 输出每项一行 ✅/❌，最后一行总计；有任何失败退出码非 0。
 
@@ -673,6 +674,189 @@ def check_insert_prototype(report: Report, chapters: list[dict] | None) -> None:
 
 
 # ============================================================
+# 掌握度与 weak_points（临时库，不碰 data/app.db）
+# ============================================================
+def check_mastery(report: Report, chapters: list[dict] | None) -> None:
+    """按契约第七节造数据，验证三因子、封顶、四档、排序与 weak_points。"""
+    if not chapters:
+        report.fail("掌握度：缺少章节数据，无法测试")
+        return
+    try:
+        from app import knowledge, profile
+    except Exception as exc:  # noqa: BLE001
+        report.fail("掌握度：无法导入 app/profile.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    original_path = db.DB_PATH
+    temp_path = DATA_DIR / f"_offline_mastery_{os.getpid()}.db"
+    try:
+        temp_path.unlink(missing_ok=True)
+        db.DB_PATH = temp_path
+        db.init_db()
+        db.insert_chapters(chapters)
+        chapter_id = chapters[0]["id"]
+
+        def make_kp(name: str) -> str:
+            return knowledge.find_or_create(name, chapter_id, context=None)
+
+        weak = make_kp("测试薄弱知识点")
+        few = make_kp("测试样本不足知识点")
+        basic = make_kp("测试基本掌握")
+        hard = make_kp("测试难题知识点")
+        decayed = make_kp("测试衰减知识点")
+        capped = make_kp("测试封顶知识点")
+        never = make_kp("测试未练知识点")
+
+        # 10 条、对 3 条、全易题 → 0.30，未掌握
+        for index in range(10):
+            db.log_practice(weak, index < 3, difficulty="easy")
+
+        # 2 条、对 1 条 → 样本不足，不参与最薄弱排名
+        for index in range(2):
+            db.log_practice(few, index < 1, difficulty="easy")
+
+        # 3 条、对 2 条 → 0.6667，基本掌握
+        for index in range(3):
+            db.log_practice(basic, index < 2, difficulty="easy")
+
+        # 4 条、对 3 条、含 1 道难题 → 0.75 × 1.15 = 0.8625
+        for _ in range(2):
+            db.log_practice(hard, True, difficulty="easy")
+        db.log_practice(hard, True, difficulty="hard")
+        db.log_practice(hard, False, difficulty="easy")
+
+        # 3 条全对，但上次练习在 40 天前 → 时间衰减 0.75
+        for _ in range(3):
+            db.log_practice(decayed, True, difficulty="easy")
+        conn = sqlite3.connect(str(temp_path))
+        try:
+            conn.execute(
+                "UPDATE practice_log SET created_at = datetime('now','localtime','-40 days')"
+                " WHERE kp_id = ?",
+                (decayed,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # 4 条全对、全难题 → 1.0 × 1.15 = 1.15，最终截断到 1.0
+        for _ in range(4):
+            db.log_practice(capped, True, difficulty="hard")
+
+        # 未练知识点：一条练习都没有，但必须出现在结果里（LEFT JOIN）
+        df = profile.mastery_table()
+
+        problems: list[str] = []
+        if list(df.columns) != profile.MASTERY_COLUMNS:
+            problems.append(f"列名/顺序不符：{list(df.columns)}")
+        if len(df) != 7:
+            problems.append(f"应有 7 个知识点（含未练过的），实际 {len(df)}")
+
+        rows = {row["kp_name"]: row for _, row in df.iterrows()}
+
+        def near(value, expected) -> bool:
+            return abs(float(value) - float(expected)) < 1e-6
+
+        weak_row = rows.get("测试薄弱知识点")
+        if weak_row is None:
+            problems.append("缺少「测试薄弱知识点」行")
+        else:
+            if weak_row["attempts"] != 10 or weak_row["correct"] != 3:
+                problems.append(f"薄弱知识点次数不对：{weak_row['attempts']}/{weak_row['correct']}")
+            if not near(weak_row["correct_rate"], 0.30):
+                problems.append(f"基础正确率应为 0.30，实际 {weak_row['correct_rate']}")
+            if not near(weak_row["mastery"], 0.30) or weak_row["status"] != "未掌握":
+                problems.append(f"薄弱知识点掌握度/状态不对：{weak_row['mastery']}/{weak_row['status']}")
+
+        few_row = rows.get("测试样本不足知识点")
+        if few_row is None:
+            problems.append("缺少「测试样本不足知识点」行")
+        else:
+            if few_row["status"] != "样本不足":
+                problems.append(f"2 条记录应为样本不足，实际 {few_row['status']}")
+            if df["kp_name"].tolist().index("测试样本不足知识点") == 0:
+                problems.append("样本不足的知识点排到了第一，会霸占最薄弱榜")
+
+        basic_row = rows.get("测试基本掌握")
+        if basic_row is None or basic_row["status"] != "基本掌握":
+            problems.append("0.6667 应为基本掌握")
+
+        hard_row = rows.get("测试难题知识点")
+        if hard_row is None:
+            problems.append("缺少「测试难题知识点」行")
+        else:
+            if not near(hard_row["difficulty_factor"], 1.15):
+                problems.append(f"含难题的难度系数应为 1.15，实际 {hard_row['difficulty_factor']}")
+            if not near(hard_row["mastery"], 0.8625):
+                problems.append(f"难题掌握度应为 0.8625，实际 {hard_row['mastery']}")
+            if not float(hard_row["mastery"]) > 0.75:
+                problems.append("含难题的掌握度没有高于同批全易题（0.75）")
+
+        decayed_row = rows.get("测试衰减知识点")
+        if decayed_row is None:
+            problems.append("缺少「测试衰减知识点」行")
+        else:
+            if not near(decayed_row["decay_factor"], 0.75):
+                problems.append(f"40 天前应衰减到 0.75，实际 {decayed_row['decay_factor']}")
+            if not near(decayed_row["mastery"], 0.75):
+                problems.append(f"衰减后掌握度应为 0.75，实际 {decayed_row['mastery']}")
+
+        capped_row = rows.get("测试封顶知识点")
+        if capped_row is None:
+            problems.append("缺少「测试封顶知识点」行")
+        else:
+            if not near(capped_row["mastery"], 1.0):
+                problems.append(f"最终掌握度应封顶 1.0，实际 {capped_row['mastery']}")
+            if not near(capped_row["difficulty_factor"], 1.15):
+                problems.append("难度系数不应被提前封顶（应保持 1.15）")
+
+        never_row = rows.get("测试未练知识点")
+        if never_row is None:
+            problems.append("未练过的知识点没有出现在结果里（LEFT JOIN 失效）")
+        else:
+            if never_row["attempts"] != 0:
+                problems.append("未练过的 attempts 应为 0")
+            if not near(never_row["mastery"], 0.0) or never_row["status"] != "样本不足":
+                problems.append("未练过的行应为 0.0 / 样本不足")
+
+        rank = {"未掌握": 0, "基本掌握": 1, "已掌握": 2, "样本不足": 3}
+        ranks = [rank.get(status, 99) for status in df["status"]]
+        if ranks != sorted(ranks):
+            problems.append(f"档位排序不对：{df['status'].tolist()}")
+        if df.iloc[0]["kp_name"] != "测试薄弱知识点":
+            problems.append(f"第一行应是薄弱知识点，实际 {df.iloc[0]['kp_name']}")
+
+        top3 = profile.weak_points(3)
+        if len(top3) != 3:
+            problems.append(f"weak_points(3) 应返回 3 条，实际 {len(top3)}")
+        if any(item["status"] == "样本不足" for item in top3):
+            problems.append("weak_points 里混进了样本不足")
+        if top3 and top3[0]["kp_name"] != "测试薄弱知识点":
+            problems.append(f"weak_points 第一名不对：{top3[0]['kp_name']}")
+        masteries = [float(item["mastery"]) for item in top3]
+        if masteries != sorted(masteries):
+            problems.append("weak_points 没有按掌握度升序")
+        if len(profile.weak_points(10)) != 5:
+            problems.append("weak_points(10) 应返回全部 5 个非样本不足知识点")
+        if profile.weak_points(0) != []:
+            problems.append("weak_points(0) 应为空")
+
+        if problems:
+            report.fail(f"掌握度：{len(problems)} 处不符合预期", "\n".join(problems[:8]))
+        else:
+            report.ok(
+                "掌握度：LEFT JOIN 全量、0.30/未掌握、样本不足不霸榜、"
+                "难题 0.8625、衰减 0.75、封顶 1.0、weak_points 排序全部正确"
+            )
+    except Exception as exc:  # noqa: BLE001
+        report.fail("掌握度：执行失败", f"{type(exc).__name__}: {exc}")
+    finally:
+        db.DB_PATH = original_path
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            Path(str(temp_path) + suffix).unlink(missing_ok=True)
+
+
+# ============================================================
 # 建表脚本（用临时库，不碰 data/app.db）
 # ============================================================
 def check_schema(report: Report) -> None:
@@ -818,6 +1002,7 @@ def main() -> int:
     check_config(report)
     check_retry_chain(report, chapters)
     check_insert_prototype(report, chapters)
+    check_mastery(report, chapters)
     check_schema(report)
     check_database(report, chapters, bank)
 

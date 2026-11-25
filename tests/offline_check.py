@@ -6,7 +6,7 @@
 
     python tests/offline_check.py
 
-覆盖范围（初版，按 PLAYBOOK 第 5 步）：
+覆盖范围（第 5 步初版 + 第 7 步校验器）：
 
     □ 知识框架数据 data/chapters.json 能加载、条数与 id 规范
     □ 题库数据 data/question_bank.json 能加载、结构/章节引用合法
@@ -14,6 +14,7 @@
     □ 本地 data/app.db 能连上、表齐全、章节与数据文件一致
     □ 数据库里没有指向不存在记录的孤儿引用（外键完整性）
     □ 题库里的 kp_id 都能在数据库中找到
+    □ 错题抽取校验器：非法 JSON/缺字段/越界 id/错误枚举/越界 confidence 都被拦住
 
 输出每项一行 ✅/❌，最后一行总计；有任何失败退出码非 0。
 
@@ -227,6 +228,143 @@ def load_question_bank(report: Report, chapters: list[dict] | None) -> list[dict
 
 
 # ============================================================
+# 错题抽取校验器（app/schemas.py）
+# ============================================================
+def check_validators(report: Report, chapters: list[dict] | None) -> None:
+    """用一组畸形输入验证 make_intake_validator()，确认拦得住且说得出原因。
+
+    这里显式传入章节候选，不依赖 data/app.db；生产路径（不传章节、从
+    knowledge.chapter_candidates() 懒加载）由 check_database 之后单独保证。
+    """
+    try:
+        from app import schemas
+    except Exception as exc:  # noqa: BLE001
+        report.fail("校验器：无法导入 app/schemas.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    allowed_kps = ["kp_a", "kp_b", "kp_c", "kp_d"]
+    allowed_chapters = (
+        [chapter["id"] for chapter in chapters]
+        if chapters
+        else ["ch_function_limit"]
+    )
+    try:
+        validate = schemas.make_intake_validator(allowed_kps, allowed_chapters)
+    except Exception as exc:  # noqa: BLE001
+        report.fail("校验器：构造失败", f"{type(exc).__name__}: {exc}")
+        return
+
+    base = {
+        "question_text": "求极限 $\\lim_{x\\to 0}\\frac{\\sin 3x}{x}$",
+        "student_answer": "1",
+        "correct_answer": "3",
+        "solution_steps": ["sin 3x ~ 3x", "原式 = 3"],
+        "knowledge_ids": ["kp_a"],
+        "new_concepts": [
+            {"name": "等价无穷小替换", "chapter_id": allowed_chapters[0]}
+        ],
+        "difficulty": "easy",
+        "error_type": "method_wrong",
+        "confidence": 0.82,
+    }
+
+    missing_payload = dict(base)
+    missing_payload.pop("confidence")
+    missing_payload.pop("error_type")
+
+    cases = [
+        ("合法草稿", dict(base), None),
+        ("不是 JSON 对象", ["not", "a", "dict"], ("JSON 对象",)),
+        (
+            "缺必填字段",
+            missing_payload,
+            ("缺少必填字段", "confidence", "error_type"),
+        ),
+        ("question_text 为空", {**base, "question_text": "   "}, ("question_text",)),
+        ("solution_steps 为空", {**base, "solution_steps": []}, ("solution_steps",)),
+        (
+            "solution_steps 有空白项",
+            {**base, "solution_steps": ["ok", " "]},
+            ("solution_steps",),
+        ),
+        (
+            "knowledge_ids 越界",
+            {**base, "knowledge_ids": ["kp_not_exist"]},
+            ("knowledge_ids", "候选列表", "kp_not_exist"),
+        ),
+        (
+            "knowledge_ids 超过 3 个",
+            {**base, "knowledge_ids": ["kp_a", "kp_b", "kp_c", "kp_d"]},
+            ("最多 3",),
+        ),
+        (
+            "knowledge_ids 不是数组",
+            {**base, "knowledge_ids": "kp_a"},
+            ("knowledge_ids", "数组"),
+        ),
+        (
+            "new_concepts 章节越界",
+            {
+                **base,
+                "new_concepts": [
+                    {"name": "新概念", "chapter_id": "ch_not_exist"}
+                ],
+            },
+            ("chapter_id", "15 个章节"),
+        ),
+        (
+            "new_concepts 名字为空",
+            {
+                **base,
+                "new_concepts": [
+                    {"name": " ", "chapter_id": allowed_chapters[0]}
+                ],
+            },
+            ("name",),
+        ),
+        ("difficulty 非法", {**base, "difficulty": "简单"}, ("difficulty",)),
+        ("error_type 非法", {**base, "error_type": "guessed"}, ("error_type",)),
+        ("confidence 越界", {**base, "confidence": 1.5}, ("confidence",)),
+        (
+            "confidence 不是数字",
+            {**base, "confidence": "0.8"},
+            ("confidence",),
+        ),
+    ]
+
+    problems: list[str] = []
+    for label, payload, expected in cases:
+        try:
+            message = validate(payload)
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"{label}：校验器抛异常 {type(exc).__name__}: {exc}")
+            continue
+
+        if expected is None:
+            if message is not None:
+                problems.append(f"{label}：应通过，实际返回 {message!r}")
+            continue
+
+        if not isinstance(message, str):
+            problems.append(f"{label}：应返回错误字符串，实际 {message!r}")
+            continue
+
+        lacking = [part for part in expected if part not in message]
+        if lacking:
+            problems.append(f"{label}：错误信息缺少 {lacking}，实际 {message!r}")
+
+    if problems:
+        report.fail(
+            f"校验器：{len(cases)} 个用例中有 {len(problems)} 个不符合预期",
+            "\n".join(problems[:8]),
+        )
+    else:
+        report.ok(
+            f"校验器：{len(cases)} 个用例全部符合预期（拦截 + 错误原因）"
+        )
+
+
+# ============================================================
 # 建表脚本（用临时库，不碰 data/app.db）
 # ============================================================
 def check_schema(report: Report) -> None:
@@ -368,6 +506,7 @@ def main() -> int:
 
     chapters = load_chapters(report)
     bank = load_question_bank(report, chapters)
+    check_validators(report, chapters)
     check_schema(report)
     check_database(report, chapters, bank)
 

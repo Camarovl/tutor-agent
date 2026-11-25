@@ -275,11 +275,21 @@ confidence / source / degraded / note`
 
 ---
 
-## 八、界面 — `streamlit_app.py`　维护人：D
+## 八、界面 — `streamlit_app.py` + `app/ui_theme.py`　维护人：D
 
 只允许调用上面各节的函数。🔴 **不许出现 SQL、不许发网络请求、不许引入前端框架。**
 
 四个标签页：① 知识点问答 ② 错题录入 ③ 掌握度分析 ④ 针对性练习
+
+### 界面分两层
+
+| 文件 | 职责 | 约束 |
+|---|---|---|
+| `streamlit_app.py` | 交互与布局：组件、状态、调用后端 | 不写 SQL、不发网络 |
+| `app/ui_theme.py` | 视觉层：注入 CSS 与主题色 | 只产出外观；不碰业务、不读写 `session_state` |
+| `.streamlit/config.toml` | Streamlit 原生主题色 | 删掉不影响功能，只是回到默认配色 |
+
+🔴 **可整段回退**：删掉 `ui_theme.py` 和 `.streamlit/config.toml`，界面应回到原生样式且功能完好。做不到这一点说明视觉层里混进了逻辑，要拆出来。
 
 ⚠️ 开场白只做页面渲染，不写进对话历史（否则发给模型的序列以 assistant 开头会报错）。
 
@@ -287,13 +297,71 @@ confidence / source / degraded / note`
 
 ## 九、桩函数 — `app/stubs.py`　维护人：D
 
-队友代码没好时用来跑通界面。🔴 返回的数据形状必须与本文件约定的完全一致，
-将来只需替换 import 来源，界面代码不动。
+队友代码没好时用来跑通界面。🔴 返回的数据形状必须与本文件约定的完全一致。
 
-在本节下方维护一张清单，标注哪些还是桩：
+### 切换机制（门面，不需要人工改 import）
+
+`streamlit_app.py` 只写 `from app import stubs as backend`。`stubs.py` 里每个函数先找真实现
+（`app.qa` / `app.intake` / `app.profile` / `app.knowledge` / `app.db`），**导入成功就转发，
+否则回落桩**。所以队友的模块一进 main，页面自动切真数据，界面代码一行都不用改。
+
+**导入期**的任何异常（`ImportError`、`SyntaxError`、模块顶层抛的 `RuntimeError` 等）都只回落桩并记进
+`problems()`，不再向外抛——否则一个语法错误就会把页面打成 traceback。
+**运行期**（真实现被调用时）的异常一个字都不接，照常向上抛：模型 401、SQL 写错不会被伪装成「桩在跑」。
+
+### 三种运行模式（`TUTOR_BACKEND`）
+
+只读这一个环境变量，不碰 `.env`、不读密钥；改完要重启进程（页面或命令）才生效。
+
+| 值 | 行为 | 用途 |
+|---|---|---|
+| `auto`（默认） | 能导入就用真实现，导入不了回落桩 | 日常开发 |
+| `stub` | 全部强制用桩，一个真实现都不调 | 演示：没配 API Key 也不报错，页面不出现任何真实数据 |
+| `real` | 必须是真实现；缺一个就在页面顶部 `st.error` 列出函数名 | 交付前自查「到底接上了没」 |
+
+非法值不会抛异常（否则整页白屏），只在 stderr 打一行警告并回落到 `auto`。
+
+### 可观测性：`sources()` / `problems()` / `summary()`
+
+门面静默回落有个致命缺点：队友的模块导入失败时页面看起来完全正常，
+没人有理由去查。所以有三个函数把状态摊开：
 
 ```
-[ ] mastery_table()      待 C₂ 实现
-[ ] answer()             待 B 实现
-[ ] analyze_text()       待 B 实现
+sources()  -> {函数名: "real" | "stub"}        # 格式固定，界面靠它判断，别改
+problems() -> {函数名: 原因}                    # 只列「模块存在但接不上」，正常缺文件不列
+summary()  -> "真 9 / 桩 4（其中 1 个异常）"    # 一行汇总，异常为 0 时不带后半句
 ```
+
+`problems()` 判三种情况：模块文件不存在 → 正常，不记录；模块存在但**导入报错** → 记录
+（多半是 `from .prompts import X` 写错，或语法错误；原因里带异常类型，如
+`模块存在但导入失败（SyntaxError）：invalid syntax (qa.py, line 3)`）；
+模块能导入但没有这个函数 → 记录（签名/名字对不上）。
+
+界面状态条显示 `◈ 接入 真 N / 桩 M`，有异常时同一行追加 `⚠️ X 个接入异常` 并红字列出，
+下方 `查看 N 个函数的接入状态` 展开是「函数 / 当前 / 归谁实现 / 异常原因」逐行表。
+
+查当前状态（别靠记忆）：
+
+```powershell
+python -c "from app import stubs; import json; print(json.dumps(stubs.sources(), ensure_ascii=False, indent=2)); print(stubs.summary()); print(stubs.problems())"
+```
+
+### 谁实现哪些函数（归属表）
+
+🔴 **「当前是真还是桩」不写在本节里** —— 它随队友合并随时变化，写死必然过期。
+想看当前值：跑上面那条命令，或看界面状态条。
+
+| 函数 | 真来源模块 | 维护人 |
+|---|---|---|
+| `answer()` | `app.qa` | B |
+| `analyze_text()` / `analyze_image()` / `commit()` | `app.intake` | B |
+| `mastery_table()` / `summary_text()` / `build_practice_session()` / `grade()` / `record_result()` | `app.profile` | C₂ |
+| `all_knowledge_points()` / `chapter_candidates()` | `app.knowledge` | C₁ |
+| `recent_wrong_questions()` / `wrong_question_count()` | `app.db` | C₁ |
+| `is_configured()` / `missing_config_keys()` | 本地读环境变量（不联网） | D |
+| `sources()` / `problems()` / `summary()` / `mode()` / `facade()` / `db_ready()` | 本节自有工具函数 | D |
+
+### 待对齐
+
+`answer()` 的 `style` 参数目前由界面传中文 `"简洁"` / `"详细"` 原样透传。
+B 的 `qa.py` 落地后若改成英文枚举，只改 `app/stubs.py` 门面一处，界面不动。

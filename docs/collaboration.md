@@ -73,7 +73,7 @@ git push -u origin feature/xxx
 
 | 文件 | 负责人 |
 |---|---|
-| `streamlit_app.py`、`app/stubs.py`、`seed_data.py`、`data/question_bank.json` | D |
+| `streamlit_app.py`、`app/ui_theme.py`、`.streamlit/config.toml`、`app/stubs.py`、`seed_data.py`、`data/question_bank.json` | D |
 | `app/llm_client.py`、`app/prompts.py`、`app/qa.py`、`app/intake.py` | B |
 | `schema.sql`、`app/db.py`、`app/knowledge.py`、`data/chapters.json` | C₁ |
 | `app/schemas.py`、`app/profile.py`、`tests/offline_check.py` | C₂ |

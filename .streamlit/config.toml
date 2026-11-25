@@ -1,0 +1,9 @@
+# Streamlit 主题：米色纸底 + 墨色文字，让数据表、下拉浮层、代码块
+# 与 app/ui_theme.py 注入的纸张风格同属一套。
+# 删除本文件不会影响功能，只是原生组件回到默认配色。
+[theme]
+base = "light"
+primaryColor = "#141414"
+backgroundColor = "#F5EFE1"
+secondaryBackgroundColor = "#EFE7D6"
+textColor = "#141414"

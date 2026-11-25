@@ -19,12 +19,15 @@
 ⚠️ 分层说明：
     契约第七节把 mastery_table() 的实现放在本文件（统计逻辑），但全项目
     红线又是「SQL 只在 db.py」。这里的折中是：**只读统计 SQL 集中在
-    _MASTERY_SQL 一处**，通过公开的 db.get_conn() 执行，不写库、不拼参数、
-    不散落。如果 A/C₁ 要求严格收口，把这段 SQL 原样搬到 db.mastery_rows()，
-    本文件只保留 DataFrame 与 weak_points 即可。
+    _MASTERY_SQL 与 _LLM_USAGE_SQL 两处**，通过公开的 db.get_conn() 执行，
+    不写库、不拼参数、不散落。如果 A/C₁ 要求严格收口，把两段 SQL 分别搬到
+    db.mastery_rows() / db.llm_usage()，本文件只保留 DataFrame 与业务函数。
 """
 
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 import pandas as pd
 
@@ -125,6 +128,27 @@ ORDER BY
     kp_name ASC
 """
 
+#: 模型调用累计次数 / token 用量（llm_log 是所有模型调用的流水表）。
+#: 目前 main 上还没有 llm_client 写入它；B 合并后这里自然有数。
+_LLM_USAGE_SQL = """
+SELECT
+    COUNT(*) AS calls,
+    COALESCE(SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)), 0) AS tokens
+FROM llm_log
+"""
+
+
+def _llm_usage() -> tuple[int, int]:
+    """返回 (累计调用次数, 累计 token 用量)；没有记录时为 (0, 0)。"""
+    conn = db.get_conn()
+    try:
+        row = conn.execute(_LLM_USAGE_SQL).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return 0, 0
+    return int(row["calls"] or 0), int(row["tokens"] or 0)
+
 
 def mastery_table() -> pd.DataFrame:
     """返回全部知识点的掌握度表（含从没练过的，11 列顺序固定）。
@@ -167,3 +191,155 @@ def weak_points(n: int) -> list[dict]:
         return []
     ranked = df[df["status"] != "样本不足"].sort_values("mastery")
     return ranked.head(int(n)).to_dict("records")
+
+
+def summary_text() -> dict:
+    """界面顶部指标卡的 6 个键（键名由契约第七节定死）。
+
+    llm_calls / llm_tokens 来自 llm_log 流水；main 上还没有 llm_client 写入它，
+    所以现在通常是 0。B 合并后不需要改本函数，日志一有记录就会自动统计。
+    """
+    df = mastery_table()
+    calls, tokens = _llm_usage()
+    return {
+        "kp_total": int(len(df)),
+        "wrong_total": int(db.wrong_question_count()),
+        "practice_total": int(df["attempts"].sum()) if not df.empty else 0,
+        "weak_count": int((df["status"] == "未掌握").sum()) if not df.empty else 0,
+        "llm_calls": calls,
+        "llm_tokens": tokens,
+    }
+
+
+def build_practice_session(count: int = 3) -> tuple[list[dict], str]:
+    """按薄弱知识点从本地题库选一组题（不调用模型）。
+
+    选池规则：
+      1. 只保留 kp_ids 都能在数据库里找到的题，避免练完写 practice_log 时外键失败；
+      2. 按「命中薄弱知识点的个数」降序，同分按题目 id 稳定排序；
+      3. 题库不够 count 题就返回现有的，并在来源说明里写清楚 —— 不假装有生成能力。
+    """
+    count = int(count)
+    if count <= 0:
+        return [], "题目数量必须大于 0"
+
+    bank_path = Path(__file__).resolve().parent.parent / "data" / "question_bank.json"
+    try:
+        bank = json.loads(bank_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [], f"题库读取失败：{type(exc).__name__}: {exc}"
+    if not isinstance(bank, list) or not bank:
+        return [], "题库为空，暂无题可练"
+
+    existing = {row["id"] for row in db.list_kps()}
+    valid: list[dict] = []
+    for item in bank:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        kp_ids = item.get("kp_ids")
+        if not isinstance(kp_ids, list) or not kp_ids:
+            continue
+        if not all(isinstance(kp_id, str) and kp_id in existing for kp_id in kp_ids):
+            continue
+        valid.append(item)
+
+    if not valid:
+        return [], "题库里的题目没有可用的知识点（可能还没跑 seed_data.py）"
+
+    weak_ids = {row["kp_id"] for row in weak_points(count)}
+
+    def weak_hits(item: dict) -> int:
+        return sum(1 for kp_id in item["kp_ids"] if kp_id in weak_ids)
+
+    ranked = sorted(valid, key=lambda item: (-weak_hits(item), str(item["id"])))
+    chosen = [dict(item) for item in ranked[:count]]
+    note = (
+        "本次来自薄弱知识点（题库）"
+        if any(weak_hits(item) > 0 for item in chosen)
+        else "本次来自题库（薄弱点覆盖不足）"
+    )
+    if len(chosen) < count:
+        note += f"；题库只有 {len(chosen)} 题，未接入生成"
+    return chosen, note
+
+
+def grade(item: dict, user_answer) -> bool:
+    """客观判分（纯函数，不读库、不联网）。
+
+    choice：忽略大小写与首尾空格；
+    fill  ：去掉所有空白后比较（不承诺 1/2 与 0.5 这类等价写法）；
+    未知题型：False。
+    """
+    if not isinstance(item, dict):
+        return False
+    expected = str(item.get("answer") or "").strip()
+    got = str(user_answer or "").strip()
+    if not expected:
+        return False
+
+    kind = item.get("type")
+    if kind == "choice":
+        return got.upper() == expected.upper()
+    if kind == "fill":
+        def normalize(value: str) -> str:
+            return "".join(value.split()).lower()
+
+        return normalize(got) == normalize(expected)
+    return False
+
+
+def record_result(items: list[dict], answers) -> list[bool]:
+    """判分 + 写 practice_log + 做错的题回流错题本。
+
+    answers 允许是 {题目 id: 用户答案}（界面用这个），也兼容按位置给的列表。
+    每道题的每个 kp_id 各写一条练习记录，掌握度按知识点分别累计。
+    """
+    results: list[bool] = []
+    for index, item in enumerate(items or []):
+        if not isinstance(item, dict):
+            results.append(False)
+            continue
+
+        qid = item.get("id")
+        if isinstance(answers, dict):
+            user_answer = answers.get(qid, "")
+        elif isinstance(answers, (list, tuple)):
+            user_answer = answers[index] if index < len(answers) else ""
+        else:
+            user_answer = ""
+
+        ok = grade(item, user_answer)
+        kp_ids = item.get("kp_ids")
+        kp_ids = kp_ids if isinstance(kp_ids, list) else []
+
+        for kp_id in kp_ids:
+            db.log_practice(
+                kp_id,
+                ok,
+                question_ref=qid,
+                difficulty=item.get("difficulty"),
+            )
+
+        if not ok:
+            explanation = item.get("explanation")
+            steps = (
+                [explanation]
+                if isinstance(explanation, str) and explanation.strip()
+                else []
+            )
+            db.insert_wrong_question(
+                {
+                    "question_text": item.get("stem") or "",
+                    "student_answer": str(user_answer or ""),
+                    "correct_answer": str(item.get("answer") or ""),
+                    "solution_steps": steps,
+                    "error_type": "unknown",
+                    "difficulty": item.get("difficulty"),
+                    "source": "practice",
+                    "kp_ids": kp_ids,
+                },
+                image_path=None,
+            )
+
+        results.append(ok)
+    return results

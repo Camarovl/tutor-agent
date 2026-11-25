@@ -19,6 +19,8 @@
     □ 降级链路：假模型连续失败 → 带原因重试 2 次 → 降级（并验证第 2 次成功即采用）
     □ 落库原型：已有 id 过滤、new_concepts 查重、非法章节/ID 丢弃后写入临时库
     □ 掌握度：LEFT JOIN 全量、三因子、最终封顶、四档、排序、weak_points
+    □ 练习校验器：题型/选项/答案/kp_ids/章节/难度
+    □ 指标卡/出题/判分/回写：summary_text 6 键、题库选池、grade、record_result
 
 输出每项一行 ✅/❌，最后一行总计；有任何失败退出码非 0。
 
@@ -41,6 +43,7 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
+import inspect
 import json
 import os
 import sqlite3
@@ -234,16 +237,38 @@ def load_question_bank(report: Report, chapters: list[dict] | None) -> list[dict
 # ============================================================
 # 错题抽取校验器（app/schemas.py）
 # ============================================================
+def _intake_validator_for_test(schemas, allowed_kps, chapters):
+    """按公开单参数签名构造校验器，仅临时替换私有的章节来源。
+
+    这样既测试了 make_intake_validator(allowed_kp_ids) 的真实签名，
+    又不需要为了测试在公开 API 上多开一个参数。
+    """
+    original = schemas._default_chapter_ids
+    schemas._default_chapter_ids = lambda: list(chapters)
+    try:
+        return schemas.make_intake_validator(allowed_kps)
+    finally:
+        schemas._default_chapter_ids = original
+
+
 def check_validators(report: Report, chapters: list[dict] | None) -> None:
     """用一组畸形输入验证 make_intake_validator()，确认拦得住且说得出原因。
 
-    这里显式传入章节候选，不依赖 data/app.db；生产路径（不传章节、从
-    knowledge.chapter_candidates() 懒加载）由 check_database 之后单独保证。
+    章节通过临时替换私有 _default_chapter_ids 注入，不依赖 data/app.db；
+    公开签名必须保持契约定死的 (allowed_kp_ids)。
     """
     try:
         from app import schemas
     except Exception as exc:  # noqa: BLE001
         report.fail("校验器：无法导入 app/schemas.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    params = list(inspect.signature(schemas.make_intake_validator).parameters)
+    if params != ["allowed_kp_ids"]:
+        report.fail(
+            "校验器：make_intake_validator 的公开签名不是 (allowed_kp_ids)",
+            f"实际参数：{params}",
+        )
         return
 
     allowed_kps = ["kp_a", "kp_b", "kp_c", "kp_d"]
@@ -253,7 +278,7 @@ def check_validators(report: Report, chapters: list[dict] | None) -> None:
         else ["ch_function_limit"]
     )
     try:
-        validate = schemas.make_intake_validator(allowed_kps, allowed_chapters)
+        validate = _intake_validator_for_test(schemas, allowed_kps, allowed_chapters)
     except Exception as exc:  # noqa: BLE001
         report.fail("校验器：构造失败", f"{type(exc).__name__}: {exc}")
         return
@@ -478,7 +503,7 @@ def check_retry_chain(report: Report, chapters: list[dict] | None) -> None:
         else ["ch_function_limit"]
     )
     try:
-        validate = schemas.make_intake_validator(allowed_kps, allowed_chapters)
+        validate = _intake_validator_for_test(schemas, allowed_kps, allowed_chapters)
     except Exception as exc:  # noqa: BLE001
         report.fail("降级链路：构造校验器失败", f"{type(exc).__name__}: {exc}")
         return
@@ -857,6 +882,263 @@ def check_mastery(report: Report, chapters: list[dict] | None) -> None:
 
 
 # ============================================================
+# 练习校验器（app/schemas.py 的 make_practice_validator）
+# ============================================================
+def check_practice_validator(report: Report, chapters: list[dict] | None) -> None:
+    """验证练习题的结构、选项、答案、kp_ids、章节与难度。"""
+    if not chapters:
+        report.fail("练习校验器：缺少章节数据，无法测试")
+        return
+    try:
+        from app import knowledge, schemas
+    except Exception as exc:  # noqa: BLE001
+        report.fail("练习校验器：无法导入 app/schemas.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    try:
+        points = knowledge.all_knowledge_points()
+    except Exception as exc:  # noqa: BLE001
+        report.fail("练习校验器：读取知识点失败", f"{type(exc).__name__}: {exc}")
+        return
+    if not points:
+        report.fail("练习校验器：库里没有知识点，先跑 seed_data.py")
+        return
+
+    kp_id = points[0]["id"]
+    chapter_id = chapters[0]["id"]
+    try:
+        validate = schemas.make_practice_validator(
+            [chapter["id"] for chapter in chapters]
+        )
+    except Exception as exc:  # noqa: BLE001
+        report.fail("练习校验器：构造失败", f"{type(exc).__name__}: {exc}")
+        return
+
+    item = {
+        "id": "qp_check_1",
+        "type": "choice",
+        "chapter_id": chapter_id,
+        "kp_ids": [kp_id],
+        "stem": "1 + 1 = ?",
+        "options": {"A": "1", "B": "2"},
+        "answer": "B",
+        "explanation": "1 + 1 = 2",
+        "difficulty": "easy",
+    }
+
+    cases = [
+        ("合法题（数组）", [dict(item)], None),
+        ("合法题（items 包装）", {"items": [dict(item)]}, None),
+        ("不是数组/对象", "题目", "数组或对象"),
+        ("没有题目", {"items": []}, "至少需要"),
+        (
+            "章节越界",
+            {**item, "chapter_id": "ch_not_exist"},
+            "chapter_id",
+        ),
+        (
+            "知识点越界",
+            {**item, "kp_ids": ["kp_not_exist"]},
+            "kp_ids",
+        ),
+        (
+            "知识点超过 3 个",
+            {**item, "kp_ids": [kp_id, kp_id, kp_id, kp_id]},
+            "最多 3",
+        ),
+        ("题型非法", {**item, "type": "judge"}, "type"),
+        (
+            "选择题答案不在选项里",
+            {**item, "answer": "D"},
+            "选项",
+        ),
+        (
+            "选择题选项不足",
+            {**item, "options": {"A": "1"}},
+            "至少需要 2 个选项",
+        ),
+        (
+            "填空题答案为空",
+            {**item, "type": "fill", "options": {}, "answer": ""},
+            "answer",
+        ),
+        ("难度非法", {**item, "difficulty": "简单"}, "difficulty"),
+    ]
+
+    problems: list[str] = []
+    for label, payload, expected in cases:
+        try:
+            message = validate(payload)
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"{label}：校验器抛异常 {type(exc).__name__}: {exc}")
+            continue
+        if expected is None:
+            if message is not None:
+                problems.append(f"{label}：应通过，实际返回 {message!r}")
+        elif not isinstance(message, str):
+            problems.append(f"{label}：应返回错误字符串，实际 {message!r}")
+        elif expected not in message:
+            problems.append(f"{label}：错误信息缺少 {expected!r}，实际 {message!r}")
+
+    if problems:
+        report.fail(
+            f"练习校验器：{len(cases)} 个用例中有 {len(problems)} 个不符合预期",
+            "\n".join(problems[:8]),
+        )
+    else:
+        report.ok(f"练习校验器：{len(cases)} 个用例全部符合预期")
+
+
+# ============================================================
+# 指标卡 / 出题 / 判分 / 回写
+# ============================================================
+def check_profile_flow(report: Report, chapters: list[dict] | None) -> None:
+    """验证 summary_text、build_practice_session、grade、record_result。"""
+    if not chapters:
+        report.fail("指标卡/出题/判分/回写：缺少章节数据，无法测试")
+        return
+    try:
+        from app import knowledge, profile
+    except Exception as exc:  # noqa: BLE001
+        report.fail("指标卡/出题/判分/回写：无法导入 app/profile.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    problems: list[str] = []
+
+    # summary_text：6 个键，数值与 mastery_table / 库表对得上
+    try:
+        summary = profile.summary_text()
+        mastery = profile.mastery_table()
+    except Exception as exc:  # noqa: BLE001
+        report.fail("指标卡：读取失败", f"{type(exc).__name__}: {exc}")
+        return
+    expected_keys = {
+        "kp_total",
+        "wrong_total",
+        "practice_total",
+        "weak_count",
+        "llm_calls",
+        "llm_tokens",
+    }
+    if set(summary) != expected_keys:
+        problems.append(f"summary_text 键不对：{sorted(summary)}")
+    if summary.get("kp_total") != len(mastery):
+        problems.append("kp_total 与 mastery_table 行数不一致")
+    if summary.get("practice_total") != int(mastery["attempts"].sum()):
+        problems.append("practice_total 不等于各知识点练习数之和")
+    if summary.get("weak_count") != int((mastery["status"] == "未掌握").sum()):
+        problems.append("weak_count 不等于未掌握知识点数")
+    if summary.get("wrong_total") != db.wrong_question_count():
+        problems.append("wrong_total 与库里的错题数不一致")
+    if not isinstance(summary.get("llm_calls"), int) or not isinstance(summary.get("llm_tokens"), int):
+        problems.append("llm_calls / llm_tokens 不是整数")
+
+    # build_practice_session：题库有 3 题，kp 必须都能在库里找到
+    try:
+        items, note = profile.build_practice_session(3)
+    except Exception as exc:  # noqa: BLE001
+        report.fail("出题：build_practice_session 失败", f"{type(exc).__name__}: {exc}")
+        return
+    if len(items) != 3:
+        problems.append(f"应出 3 题，实际 {len(items)} 题")
+    if not note:
+        problems.append("出题来源说明为空")
+    if len({item.get("id") for item in items}) != len(items):
+        problems.append("同一组题里出现重复 id")
+    existing = {row["id"] for row in db.list_kps()}
+    for item in items:
+        kp_ids = item.get("kp_ids")
+        if not isinstance(kp_ids, list) or not kp_ids:
+            problems.append(f"题目 {item.get('id')} 没有 kp_ids")
+        elif not all(kp_id in existing for kp_id in kp_ids):
+            problems.append(f"题目 {item.get('id')} 的 kp_ids 不在库里")
+
+    # grade：纯函数、大小写/空格宽容、未知题型 False
+    grade_cases = [
+        ("选择题小写", {"type": "choice", "answer": "B"}, "b", True),
+        ("选择题首尾空格", {"type": "choice", "answer": "A"}, " A ", True),
+        ("选择题错选", {"type": "choice", "answer": "B"}, "A", False),
+        ("填空题空格", {"type": "fill", "answer": "x^2+C"}, " x ^ 2 + C ", True),
+        ("填空题错答", {"type": "fill", "answer": "3"}, "4", False),
+        ("未知题型", {"type": "judge", "answer": "A"}, "A", False),
+        ("答案为空", {"type": "fill", "answer": ""}, "", False),
+    ]
+    for label, item, answer, expected in grade_cases:
+        got = profile.grade(item, answer)
+        if bool(got) != expected:
+            problems.append(f"{label}：期望 {expected}，实际 {got}")
+
+    # record_result：临时库里写练习记录 + 做错的题回流
+    original_path = db.DB_PATH
+    temp_path = DATA_DIR / f"_offline_record_{os.getpid()}.db"
+    try:
+        temp_path.unlink(missing_ok=True)
+        db.DB_PATH = temp_path
+        db.init_db()
+        db.insert_chapters(chapters)
+        kp_id = knowledge.find_or_create(
+            "回写测试知识点", chapters[0]["id"], context=None
+        )
+        test_items = [
+            {
+                "id": "qp_record_1",
+                "type": "choice",
+                "chapter_id": chapters[0]["id"],
+                "kp_ids": [kp_id],
+                "stem": "回写测试题一",
+                "options": {"A": "1", "B": "2"},
+                "answer": "B",
+                "explanation": "正确答案是 B",
+                "difficulty": "easy",
+            },
+            {
+                "id": "qp_record_2",
+                "type": "fill",
+                "chapter_id": chapters[0]["id"],
+                "kp_ids": [kp_id],
+                "stem": "回写测试题二",
+                "options": {},
+                "answer": "3",
+                "explanation": "正确答案是 3",
+                "difficulty": "easy",
+            },
+        ]
+        results = profile.record_result(
+            test_items, {"qp_record_1": "A", "qp_record_2": " 3 "}
+        )
+        if results != [False, True]:
+            problems.append(f"record_result 返回值不对：{results}")
+        conn = db.get_conn()
+        try:
+            practice_count = conn.execute(
+                "SELECT COUNT(*) FROM practice_log WHERE kp_id = ?", (kp_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        if practice_count != 2:
+            problems.append(f"应写 2 条练习记录，实际 {practice_count}")
+        if db.wrong_question_count() != 1:
+            problems.append(f"应回流 1 道错题，实际 {db.wrong_question_count()}")
+        recent = db.recent_wrong_questions(1)
+        if not recent or recent[0]["question_text"] != "回写测试题一":
+            problems.append("回流错题的题干不对")
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"record_result 执行异常：{type(exc).__name__}: {exc}")
+    finally:
+        db.DB_PATH = original_path
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            Path(str(temp_path) + suffix).unlink(missing_ok=True)
+
+    if problems:
+        report.fail(f"指标卡/出题/判分/回写：{len(problems)} 处不符合预期", "\n".join(problems[:8]))
+    else:
+        report.ok(
+            "指标卡/出题/判分/回写：6 键、题库 3 题、7 个判分用例、"
+            "2 条练习记录 + 1 道错题回流全部正确"
+        )
+
+
+# ============================================================
 # 建表脚本（用临时库，不碰 data/app.db）
 # ============================================================
 def check_schema(report: Report) -> None:
@@ -1003,6 +1285,8 @@ def main() -> int:
     check_retry_chain(report, chapters)
     check_insert_prototype(report, chapters)
     check_mastery(report, chapters)
+    check_practice_validator(report, chapters)
+    check_profile_flow(report, chapters)
     check_schema(report)
     check_database(report, chapters, bank)
 

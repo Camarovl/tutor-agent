@@ -9,9 +9,9 @@
     模型重试（见 app/llm_client.py 的 chat(validator=...)）。
 
 本文件只做纯校验：不读数据库、不发网络请求、不写库。
-    - 默认的章节候选集是唯一例外：make_intake_validator() 不传
-      allowed_chapter_ids 时，会懒加载 app.knowledge.chapter_candidates()；
-      测试可以显式传入，避免依赖数据库。
+    - 默认的章节候选集是唯一例外：make_intake_validator() 内部调用
+      _default_chapter_ids() 懒加载 app.knowledge.chapter_candidates()；
+      测试可以临时替换这个私有函数来注入章节，不改变公开签名。
 """
 
 from __future__ import annotations
@@ -33,6 +33,8 @@ REQUIRED_FIELDS = (
 )
 
 DIFFICULTIES = ("easy", "medium", "hard")
+
+QUESTION_TYPES = ("choice", "fill")
 
 ERROR_TYPES = (
     "concept_confusion",
@@ -58,8 +60,8 @@ def _is_number(value: Any) -> bool:
 def _default_chapter_ids() -> list[str]:
     """从知识层取 15 个章节 id。
 
-    懒加载：只有调用方没传 allowed_chapter_ids 时才碰数据库，
-    这样单元测试可以完全不依赖 data/app.db。
+    懒加载：只有 make_intake_validator() 需要章节时才碰数据库；
+    测试通过临时替换本函数注入章节，这样公开签名保持单参数。
     """
     from . import knowledge  # 局部导入，避免 schemas 在导入期依赖数据库
 
@@ -80,15 +82,35 @@ def _default_chapter_ids() -> list[str]:
     return ids
 
 
-def make_intake_validator(
-    allowed_kp_ids: Any,
-    allowed_chapter_ids: Any = None,
-) -> Callable[[Any], str | None]:
+def _default_kp_ids() -> list[str]:
+    """取现有知识点 id，供练习出题校验器检查 kp_ids 是否越界。"""
+    from . import knowledge
+
+    try:
+        points = knowledge.all_knowledge_points()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "无法加载知识点候选集：请先运行 python seed_data.py 建库灌入演示知识点"
+        ) from exc
+
+    ids = [
+        str(point["id"])
+        for point in points
+        if isinstance(point, dict) and point.get("id")
+    ]
+    if not ids:
+        raise RuntimeError("知识点候选集为空：请先运行 python seed_data.py")
+    return ids
+
+
+def make_intake_validator(allowed_kp_ids: Any) -> Callable[[Any], str | None]:
     """构造「错题抽取」校验器。
 
     参数
-        allowed_kp_ids         现有知识点 id 列表/集合（取 knowledge.all_knowledge_points() 里的 id）
-        allowed_chapter_ids    15 个章节 id；不传时从 knowledge.chapter_candidates() 取
+        allowed_kp_ids    现有知识点 id 列表/集合（取 knowledge.all_knowledge_points() 里的 id）
+
+    15 个章节由 _default_chapter_ids() 内部从 knowledge.chapter_candidates() 取；
+    测试可以临时替换这个私有函数来注入章节，不改变公开签名。
 
     返回
         一个函数：输入模型解析后的 dict，合规返回 None，
@@ -110,13 +132,7 @@ def make_intake_validator(
     if allowed_kp_ids is None:
         raise ValueError("allowed_kp_ids 不能为 None")
     allowed_kps = {str(kp_id) for kp_id in allowed_kp_ids}
-
-    if allowed_chapter_ids is None:
-        allowed_chapters = set(_default_chapter_ids())
-    else:
-        allowed_chapters = {str(chapter_id) for chapter_id in allowed_chapter_ids}
-    if not allowed_chapters:
-        raise ValueError("allowed_chapter_ids 不能为空")
+    allowed_chapters = set(_default_chapter_ids())
 
     def validate(data: Any) -> str | None:
         # ① 顶层必须是对象。JSON 字符串、数组、None 都在这里被挡住。
@@ -208,6 +224,125 @@ def make_intake_validator(
             return f"confidence 必须是 0~1 之间的数字，实际 {confidence!r}"
         if not math.isfinite(confidence_value) or not 0 <= confidence_value <= 1:
             return f"confidence 必须是 0~1 之间的数字，实际 {confidence!r}"
+
+        return None
+
+    return validate
+
+
+def make_practice_validator(
+    allowed_chapter_ids: Any,
+    expected_min: int = 1,
+) -> Callable[[Any], str | None]:
+    """构造「练习出题」校验器。
+
+    参数
+        allowed_chapter_ids  15 个章节 id（题目只能挂在已有章节下）
+        expected_min         至少几道题；默认 1
+
+    输入形状
+        列表 / 元组，或 {"items": [...]}，或单个题目对象。
+        兼容这三种是因为模型可能返回数组，也可能按 json_mode 包一层。
+
+    返回
+        合规 None；不合规返回中文错误串，供 llm_client 回喂重试。
+
+    🔴 kp_ids 必须在现有知识点候选集里，否则练完写 practice_log 会撞外键。
+    """
+    allowed_chapters = {str(chapter_id) for chapter_id in allowed_chapter_ids}
+    if not allowed_chapters:
+        raise ValueError("allowed_chapter_ids 不能为空")
+    try:
+        minimum = int(expected_min)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"expected_min 必须是整数：{expected_min!r}") from exc
+    minimum = max(0, minimum)
+
+    # 知识点候选集只能在工厂里取；测试时会先建好临时/演示库。
+    allowed_kps = set(_default_kp_ids())
+
+    def validate(data: Any) -> str | None:
+        if isinstance(data, dict):
+            if "items" in data:
+                items = data["items"]
+            elif "id" in data:
+                items = [data]
+            else:
+                return "练习题必须是数组，或包含 items 数组的对象"
+        elif isinstance(data, (list, tuple)):
+            items = list(data)
+        else:
+            return f"练习题必须是数组或对象，实际是 {type(data).__name__}"
+
+        if not isinstance(items, (list, tuple)):
+            return "items 必须是数组"
+        if len(items) < minimum:
+            return f"至少需要 {minimum} 道题，实际 {len(items)} 道"
+
+        for index, item in enumerate(items, start=1):
+            prefix = f"第 {index} 题"
+            if not isinstance(item, dict):
+                return f"{prefix}必须是对象"
+
+            qid = item.get("id")
+            if not isinstance(qid, str) or not qid.startswith("qp_"):
+                return f"{prefix} id 必须是 qp_ 开头的字符串，实际 {qid!r}"
+
+            qtype = item.get("type")
+            if qtype not in QUESTION_TYPES:
+                return (
+                    f"{prefix} type 必须是 " + " / ".join(QUESTION_TYPES)
+                    + f" 之一，实际 {qtype!r}"
+                )
+
+            chapter_id = item.get("chapter_id")
+            if not isinstance(chapter_id, str) or chapter_id not in allowed_chapters:
+                return f"{prefix} chapter_id 不在 15 个章节内：{chapter_id!r}"
+
+            kp_ids = item.get("kp_ids")
+            if not _is_array(kp_ids) or not kp_ids:
+                return f"{prefix} kp_ids 必须是非空数组"
+            if len(kp_ids) > MAX_KNOWLEDGE_IDS:
+                return f"{prefix} kp_ids 最多 {MAX_KNOWLEDGE_IDS} 个，实际 {len(kp_ids)} 个"
+            if any(not isinstance(kp_id, str) or not kp_id.strip() for kp_id in kp_ids):
+                return f"{prefix} kp_ids 的每一项都必须是非空字符串"
+            unknown = sorted({kp_id for kp_id in kp_ids if kp_id not in allowed_kps})
+            if unknown:
+                return (
+                    f"{prefix} kp_ids 有不在候选列表内的值："
+                    + "、".join(unknown)
+                    + f"（候选共 {len(allowed_kps)} 个）"
+                )
+
+            stem = item.get("stem")
+            if not isinstance(stem, str) or not stem.strip():
+                return f"{prefix} stem 必须是非空字符串"
+            answer = item.get("answer")
+            if not isinstance(answer, str) or not answer.strip():
+                return f"{prefix} answer 必须是非空字符串"
+            explanation = item.get("explanation")
+            if not isinstance(explanation, str) or not explanation.strip():
+                return f"{prefix} explanation 必须是非空字符串"
+
+            difficulty = item.get("difficulty")
+            if not isinstance(difficulty, str) or difficulty not in DIFFICULTIES:
+                return (
+                    f"{prefix} difficulty 必须是 " + " / ".join(DIFFICULTIES)
+                    + f" 之一，实际 {difficulty!r}"
+                )
+
+            options = item.get("options")
+            if qtype == "choice":
+                if not isinstance(options, dict) or len(options) < 2:
+                    return f"{prefix} choice 至少需要 2 个选项"
+                keys = {str(key).strip().upper() for key in options}
+                if answer.strip().upper() not in keys:
+                    return (
+                        f"{prefix} 标准答案 {answer!r} 不是有效选项编号，"
+                        f"可选编号为 {sorted(keys)}"
+                    )
+            elif options not in ({}, None):
+                return f"{prefix} fill 的 options 应为空对象"
 
         return None
 

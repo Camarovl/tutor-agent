@@ -1156,6 +1156,176 @@ def check_profile_flow(report: Report, chapters: list[dict] | None) -> None:
 
 
 # ============================================================
+# 空库校验器工厂 / 错题去重与错因
+# ============================================================
+def check_empty_factories(report: Report) -> None:
+    """空库（只有表、没有章节/知识点）时，两个校验器工厂必须能构造。"""
+    try:
+        from app import schemas
+    except Exception as exc:  # noqa: BLE001
+        report.fail("空库工厂：无法导入 app/schemas.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    original_path = db.DB_PATH
+    temp_path = DATA_DIR / f"_offline_empty_{os.getpid()}.db"
+    try:
+        temp_path.unlink(missing_ok=True)
+        db.DB_PATH = temp_path
+        db.init_db()
+        try:
+            intake = schemas.make_intake_validator()
+            practice = schemas.make_practice_validator()
+        except Exception as exc:  # noqa: BLE001
+            report.fail("空库工厂：构造阶段抛异常", f"{type(exc).__name__}: {exc}")
+            return
+
+        intake_error = intake(
+            {
+                "question_text": "q",
+                "student_answer": "",
+                "correct_answer": "a",
+                "solution_steps": ["s"],
+                "knowledge_ids": ["kp_missing"],
+                "new_concepts": [],
+                "difficulty": "easy",
+                "error_type": "unknown",
+                "confidence": 0.5,
+            }
+        )
+        practice_error = practice(
+            [
+                {
+                    "id": "qp_empty_1",
+                    "type": "choice",
+                    "chapter_id": "ch_missing",
+                    "kp_ids": ["kp_missing"],
+                    "stem": "q",
+                    "options": {"A": "1", "B": "2"},
+                    "answer": "A",
+                    "explanation": "e",
+                    "difficulty": "easy",
+                }
+            ]
+        )
+        if not isinstance(intake_error, str) or "knowledge_ids" not in intake_error:
+            report.fail("空库工厂：非法知识点没有给出清晰错误", repr(intake_error))
+        elif not isinstance(practice_error, str) or "chapter_id" not in practice_error:
+            report.fail("空库工厂：非法章节没有给出清晰错误", repr(practice_error))
+        else:
+            report.ok("空库工厂：两个校验器均可构造，非法项给出清晰错误")
+    except Exception as exc:  # noqa: BLE001
+        report.fail("空库工厂：执行失败", f"{type(exc).__name__}: {exc}")
+    finally:
+        db.DB_PATH = original_path
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            Path(str(temp_path) + suffix).unlink(missing_ok=True)
+
+
+def check_record_dedupe(report: Report, chapters: list[dict] | None) -> None:
+    """同一 source_question_id 反复做错只累加；不同 id 新建；错因能推则推。"""
+    if not chapters:
+        report.fail("去重/错因：缺少章节数据，无法测试")
+        return
+    try:
+        from app import knowledge, profile
+    except Exception as exc:  # noqa: BLE001
+        report.fail("去重/错因：无法导入 app/profile.py", f"{type(exc).__name__}: {exc}")
+        return
+
+    original_path = db.DB_PATH
+    temp_path = DATA_DIR / f"_offline_dedupe_{os.getpid()}.db"
+    try:
+        temp_path.unlink(missing_ok=True)
+        db.DB_PATH = temp_path
+        db.init_db()
+        db.insert_chapters(chapters)
+        kp_id = knowledge.find_or_create(
+            "去重测试知识点", chapters[0]["id"], context=None
+        )
+
+        def make_item(qid: str | None, answer: str) -> dict:
+            item = {
+                "type": "fill",
+                "chapter_id": chapters[0]["id"],
+                "kp_ids": [kp_id],
+                "stem": "去重测试题",
+                "options": {},
+                "answer": answer,
+                "explanation": "解析",
+                "difficulty": "easy",
+            }
+            if qid is not None:
+                item["id"] = qid
+            return item
+
+        same = make_item("qp_dedup_1", "3")
+        for _ in range(3):
+            profile.record_result([same], {"qp_dedup_1": ""})
+        profile.record_result([make_item("qp_dedup_2", "3")], {"qp_dedup_2": "4"})
+        profile.record_result(
+            [make_item("qp_dedup_3", "x^2+C")], {"qp_dedup_3": "x^3"}
+        )
+        profile.record_result([make_item(None, "3")], {None: "4"})
+
+        conn = db.get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT source_question_id, error_count, error_type "
+                "FROM wrong_question ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        by_source = {
+            row["source_question_id"]: row
+            for row in rows
+            if row["source_question_id"] is not None
+        }
+        problems: list[str] = []
+        if len(rows) != 4:
+            problems.append(f"应有 4 条错题（3 个有 id + 1 个无 id），实际 {len(rows)}")
+        first = by_source.get("qp_dedup_1")
+        if first is None:
+            problems.append("qp_dedup_1 没有写入")
+        else:
+            if first["error_count"] != 3:
+                problems.append(f"qp_dedup_1 error_count 应为 3，实际 {first['error_count']}")
+            if first["error_type"] != "incomplete":
+                problems.append(f"空答案应判 incomplete，实际 {first['error_type']}")
+        second = by_source.get("qp_dedup_2")
+        if second is None:
+            problems.append("qp_dedup_2 没有写入")
+        else:
+            if second["error_count"] != 1:
+                problems.append(f"qp_dedup_2 error_count 应为 1，实际 {second['error_count']}")
+            if second["error_type"] != "calculation_error":
+                problems.append(
+                    f"数值错应判 calculation_error，实际 {second['error_type']}"
+                )
+        third = by_source.get("qp_dedup_3")
+        if third is None:
+            problems.append("qp_dedup_3 没有写入")
+        elif third["error_type"] != "unknown":
+            problems.append(f"非数值错应判 unknown，实际 {third['error_type']}")
+        if len(by_source) != 3:
+            problems.append(f"应有 3 个不同 source id，实际 {sorted(by_source)}")
+
+        if problems:
+            report.fail(f"去重/错因：{len(problems)} 处不符合预期", "\n".join(problems[:8]))
+        else:
+            report.ok(
+                "去重/错因：同题 3 次→1 行 error_count=3；换 id→2 行；"
+                "空答/数值错/其他分别为 incomplete/calculation_error/unknown"
+            )
+    except Exception as exc:  # noqa: BLE001
+        report.fail("去重/错因：执行失败", f"{type(exc).__name__}: {exc}")
+    finally:
+        db.DB_PATH = original_path
+        for suffix in ("", "-journal", "-wal", "-shm"):
+            Path(str(temp_path) + suffix).unlink(missing_ok=True)
+
+
+# ============================================================
 # 建表脚本（用临时库，不碰 data/app.db）
 # ============================================================
 def check_schema(report: Report) -> None:
@@ -1174,17 +1344,31 @@ def check_schema(report: Report) -> None:
             rows = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
+            index_row = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'index' AND name = 'idx_wq_source'"
+            ).fetchone()
+            index_list = conn.execute("PRAGMA index_list('wrong_question')").fetchall()
         finally:
             conn.close()
 
         names = {row[0] for row in rows}
         missing = EXPECTED_TABLES - names
+        index_unique = any(
+            row[1] == "idx_wq_source" and row[2] == 1 for row in index_list
+        )
         if missing:
             report.fail("建表脚本：缺少表", "、".join(sorted(missing)))
         elif fk != 1:
             report.fail("建表脚本：外键开关未生效（PRAGMA foreign_keys != 1）")
+        elif index_row is None:
+            report.fail("建表脚本：缺少 idx_wq_source 索引")
+        elif not index_unique:
+            report.fail("建表脚本：idx_wq_source 不是 UNIQUE")
         else:
-            report.ok("建表脚本：六张表齐全，外键开关生效")
+            report.ok(
+                "建表脚本：六张表齐全、外键开关生效、idx_wq_source 存在且 UNIQUE"
+            )
     except Exception as exc:  # noqa: BLE001 —— 体检脚本要把异常翻成一行结果
         report.fail("建表脚本：执行失败", f"{type(exc).__name__}: {exc}")
     finally:
@@ -1362,11 +1546,13 @@ def main() -> int:
 
         check_validators(report, chapters)
         check_config(report)
+        check_empty_factories(report)
         check_retry_chain(report, chapters)
         check_insert_prototype(report, chapters)
         check_mastery(report, chapters)
         check_practice_validator(report, chapters)
         check_profile_flow(report, chapters)
+        check_record_dedupe(report, chapters)
         check_schema(report)
         check_database(report, chapters, bank)
 

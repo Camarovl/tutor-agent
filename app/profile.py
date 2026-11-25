@@ -16,12 +16,9 @@
 
     <40% 未掌握 / <70% 基本掌握 / ≥70% 已掌握
 
-⚠️ 分层说明：
-    契约第七节把 mastery_table() 的实现放在本文件（统计逻辑），但全项目
-    红线又是「SQL 只在 db.py」。这里的折中是：**只读统计 SQL 集中在
-    _MASTERY_SQL 与 _LLM_USAGE_SQL 两处**，通过公开的 db.get_conn() 执行，
-    不写库、不拼参数、不散落。如果 A/C₁ 要求严格收口，把两段 SQL 分别搬到
-    db.mastery_rows() / db.llm_usage()，本文件只保留 DataFrame 与业务函数。
+⚠️ 数据层说明：
+    mastery 的聚合、系数计算与分级由 db.mastery_rows() 完成（SQL 在 db.py），
+    llm 用量由 db.llm_usage() 提供；本文件只负责 DataFrame 转换、类型与四舍五入。
 """
 
 from __future__ import annotations
@@ -48,107 +45,6 @@ MASTERY_COLUMNS = [
     "status",
 ]
 
-#: 只读统计 SQL。LEFT JOIN 保证从没练过的知识点也在结果里；
-#: NULLIF 防除零；排序不用 NULLS LAST（旧 SQLite 不认）。
-_MASTERY_SQL = """
-WITH stats AS (
-    SELECT
-        kp.id AS kp_id,
-        kp.name AS kp_name,
-        kp.chapter_id AS chapter_id,
-        c.name AS chapter_name,
-        COUNT(pl.id) AS attempts,
-        COALESCE(SUM(CASE WHEN pl.is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
-        MAX(pl.created_at) AS last_practiced_at,
-        MAX(CASE WHEN pl.difficulty = 'medium' THEN 1 ELSE 0 END) AS has_medium,
-        MAX(CASE WHEN pl.difficulty = 'hard' THEN 1 ELSE 0 END) AS has_hard
-    FROM knowledge_point kp
-    JOIN chapter c ON c.id = kp.chapter_id
-    LEFT JOIN practice_log pl ON pl.kp_id = kp.id
-    GROUP BY kp.id, kp.name, kp.chapter_id, c.name
-),
-rated AS (
-    SELECT
-        *,
-        CASE
-            WHEN attempts = 0 THEN 0.0
-            ELSE correct * 1.0 / NULLIF(attempts, 0)
-        END AS correct_rate,
-        CASE
-            WHEN attempts = 0 THEN 0.0
-            WHEN has_hard = 1 THEN 1.15
-            WHEN has_medium = 1 THEN 1.05
-            ELSE 1.0
-        END AS difficulty_factor,
-        CASE
-            WHEN attempts = 0 THEN 0.0
-            WHEN julianday('now', 'localtime') - julianday(last_practiced_at) <= 7 THEN 1.0
-            WHEN julianday('now', 'localtime') - julianday(last_practiced_at) <= 30 THEN 0.9
-            ELSE 0.75
-        END AS decay_factor
-    FROM stats
-),
-scored AS (
-    SELECT
-        *,
-        CASE
-            WHEN attempts = 0 THEN 0.0
-            WHEN correct_rate * difficulty_factor * decay_factor > 1.0 THEN 1.0
-            ELSE correct_rate * difficulty_factor * decay_factor
-        END AS mastery
-    FROM rated
-)
-SELECT
-    kp_id,
-    kp_name,
-    chapter_id,
-    chapter_name,
-    attempts,
-    correct,
-    correct_rate,
-    difficulty_factor,
-    decay_factor,
-    mastery,
-    CASE
-        WHEN attempts < 3 THEN '样本不足'
-        WHEN mastery < 0.4 THEN '未掌握'
-        WHEN mastery < 0.7 THEN '基本掌握'
-        ELSE '已掌握'
-    END AS status
-FROM scored
-ORDER BY
-    CASE WHEN mastery IS NULL THEN 1 ELSE 0 END,
-    CASE
-        WHEN attempts < 3 THEN 3
-        WHEN mastery < 0.4 THEN 0
-        WHEN mastery < 0.7 THEN 1
-        ELSE 2
-    END,
-    mastery ASC,
-    kp_name ASC
-"""
-
-#: 模型调用累计次数 / token 用量（llm_log 是所有模型调用的流水表）。
-#: 目前 main 上还没有 llm_client 写入它；B 合并后这里自然有数。
-_LLM_USAGE_SQL = """
-SELECT
-    COUNT(*) AS calls,
-    COALESCE(SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)), 0) AS tokens
-FROM llm_log
-"""
-
-
-def _llm_usage() -> tuple[int, int]:
-    """返回 (累计调用次数, 累计 token 用量)；没有记录时为 (0, 0)。"""
-    conn = db.get_conn()
-    try:
-        row = conn.execute(_LLM_USAGE_SQL).fetchone()
-    finally:
-        conn.close()
-    if row is None:
-        return 0, 0
-    return int(row["calls"] or 0), int(row["tokens"] or 0)
-
 
 def mastery_table() -> pd.DataFrame:
     """返回全部知识点的掌握度表（含从没练过的，11 列顺序固定）。
@@ -157,18 +53,13 @@ def mastery_table() -> pd.DataFrame:
     mastery 全部为 0.0，status 固定「样本不足」——契约要求这些行必须出现，
     否则界面上的表会缺行。
     """
-    conn = db.get_conn()
-    try:
-        rows = conn.execute(_MASTERY_SQL).fetchall()
-    finally:
-        conn.close()
-
+    rows = db.mastery_rows()
     if not rows:
         return pd.DataFrame(columns=MASTERY_COLUMNS)
 
-    df = pd.DataFrame([dict(row) for row in rows], columns=MASTERY_COLUMNS)
+    df = pd.DataFrame(rows, columns=MASTERY_COLUMNS)
 
-    # 保留 4 位小数，和桩数据/界面展示口径一致；阈值判断在 SQL 里已经做完。
+    # db.mastery_rows() 已经把系数、mastery、status 算好；这里只做类型与四舍五入。
     for column in ("correct_rate", "difficulty_factor", "decay_factor", "mastery"):
         df[column] = df[column].astype(float).round(4)
 
@@ -196,18 +87,17 @@ def weak_points(n: int) -> list[dict]:
 def summary_text() -> dict:
     """界面顶部指标卡的 6 个键（键名由契约第七节定死）。
 
-    llm_calls / llm_tokens 来自 llm_log 流水；main 上还没有 llm_client 写入它，
-    所以现在通常是 0。B 合并后不需要改本函数，日志一有记录就会自动统计。
+    llm 用量由 db.llm_usage() 提供；没有调用记录时是 0。
     """
     df = mastery_table()
-    calls, tokens = _llm_usage()
+    usage = db.llm_usage()
     return {
         "kp_total": int(len(df)),
         "wrong_total": int(db.wrong_question_count()),
         "practice_total": int(df["attempts"].sum()) if not df.empty else 0,
         "weak_count": int((df["status"] == "未掌握").sum()) if not df.empty else 0,
-        "llm_calls": calls,
-        "llm_tokens": tokens,
+        "llm_calls": int(usage.get("calls", 0)),
+        "llm_tokens": int(usage.get("tokens", 0)),
     }
 
 
@@ -288,6 +178,37 @@ def grade(item: dict, user_answer) -> bool:
     return False
 
 
+def _as_number(value) -> float | None:
+    """能转成数字就返回 float，否则 None（只用于错因的启发式判断）。"""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _infer_error_type(item: dict, user_answer) -> str:
+    """不调模型的错因推断：空答案 → incomplete，数值不等 → calculation_error。
+
+    判不出来就落 unknown；界面会提示“判不出”，不会伪造确定性。
+    """
+    got = str(user_answer or "").strip()
+    expected = str(item.get("answer") or "").strip()
+    if not got:
+        return "incomplete"
+    got_number = _as_number(got)
+    expected_number = _as_number(expected)
+    if (
+        got_number is not None
+        and expected_number is not None
+        and got_number != expected_number
+    ):
+        return "calculation_error"
+    return "unknown"
+
+
 def record_result(items: list[dict], answers) -> list[bool]:
     """判分 + 写 practice_log + 做错的题回流错题本。
 
@@ -327,19 +248,25 @@ def record_result(items: list[dict], answers) -> list[bool]:
                 if isinstance(explanation, str) and explanation.strip()
                 else []
             )
-            db.insert_wrong_question(
-                {
-                    "question_text": item.get("stem") or "",
-                    "student_answer": str(user_answer or ""),
-                    "correct_answer": str(item.get("answer") or ""),
-                    "solution_steps": steps,
-                    "error_type": "unknown",
-                    "difficulty": item.get("difficulty"),
-                    "source": "practice",
-                    "kp_ids": kp_ids,
-                },
-                image_path=None,
-            )
+            wrong_data = {
+                "question_text": item.get("stem") or "",
+                "student_answer": str(user_answer or ""),
+                "correct_answer": str(item.get("answer") or ""),
+                "solution_steps": steps,
+                "error_type": _infer_error_type(item, user_answer),
+                "difficulty": item.get("difficulty"),
+                "source": "practice",
+                "kp_ids": kp_ids,
+            }
+            source_id = qid.strip() if isinstance(qid, str) else ""
+            if source_id:
+                # 同一道题反复做错只累加 error_count，不重复建错题
+                db.upsert_wrong_question_by_source(
+                    source_id, wrong_data, image_path=None
+                )
+            else:
+                # 没有题目 id 的兜底路径，无法去重，保持普通插入
+                db.insert_wrong_question(wrong_data, image_path=None)
 
         results.append(ok)
     return results

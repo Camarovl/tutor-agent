@@ -103,14 +103,30 @@ def _default_kp_ids() -> list[str]:
     return ids
 
 
-def make_intake_validator(allowed_kp_ids: Any) -> Callable[[Any], str | None]:
+def _safe_chapter_ids() -> list[str]:
+    """尝试读章节；库没建/空库时返回空集合，构造校验器不崩。"""
+    try:
+        return _default_chapter_ids()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _safe_kp_ids() -> list[str]:
+    """尝试读知识点；库没建/空库时返回空集合，构造校验器不崩。"""
+    try:
+        return _default_kp_ids()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def make_intake_validator(allowed_kp_ids: Any = None) -> Callable[[Any], str | None]:
     """构造「错题抽取」校验器。
 
     参数
-        allowed_kp_ids    现有知识点 id 列表/集合（取 knowledge.all_knowledge_points() 里的 id）
+        allowed_kp_ids    可选的现有知识点 id；不传时尝试读库，读不到按空集合处理
 
-    15 个章节由 _default_chapter_ids() 内部从 knowledge.chapter_candidates() 取；
-    测试可以临时替换这个私有函数来注入章节，不改变公开签名。
+    15 个章节由 _safe_chapter_ids() 内部尝试从 knowledge.chapter_candidates() 取；
+    库没建/空库时按空集合处理，构造阶段不抛异常，非法项由校验器给出清晰错误。
 
     返回
         一个函数：输入模型解析后的 dict，合规返回 None，
@@ -130,9 +146,9 @@ def make_intake_validator(allowed_kp_ids: Any) -> Callable[[Any], str | None]:
        「不定积分」「不定的积分」「求不定积分」会各建一条，掌握度统计作废。
     """
     if allowed_kp_ids is None:
-        raise ValueError("allowed_kp_ids 不能为 None")
+        allowed_kp_ids = _safe_kp_ids()
     allowed_kps = {str(kp_id) for kp_id in allowed_kp_ids}
-    allowed_chapters = set(_default_chapter_ids())
+    allowed_chapters = set(_safe_chapter_ids())
 
     def validate(data: Any) -> str | None:
         # ① 顶层必须是对象。JSON 字符串、数组、None 都在这里被挡住。
@@ -231,13 +247,13 @@ def make_intake_validator(allowed_kp_ids: Any) -> Callable[[Any], str | None]:
 
 
 def make_practice_validator(
-    allowed_chapter_ids: Any,
+    allowed_chapter_ids: Any = None,
     expected_min: int = 1,
 ) -> Callable[[Any], str | None]:
     """构造「练习出题」校验器。
 
     参数
-        allowed_chapter_ids  15 个章节 id（题目只能挂在已有章节下）
+        allowed_chapter_ids  可选的 15 个章节 id；不传时尝试读库，读不到按空集合
         expected_min         至少几道题；默认 1
 
     输入形状
@@ -247,19 +263,19 @@ def make_practice_validator(
     返回
         合规 None；不合规返回中文错误串，供 llm_client 回喂重试。
 
-    🔴 kp_ids 必须在现有知识点候选集里，否则练完写 practice_log 会撞外键。
+    🔴 kp_ids 必须在现有知识点候选集里，否则练完写 practice_log 会撞外键；
+       库没建/空库时按空集合处理，构造阶段不崩，非法项由校验器报错。
     """
+    if allowed_chapter_ids is None:
+        allowed_chapter_ids = _safe_chapter_ids()
     allowed_chapters = {str(chapter_id) for chapter_id in allowed_chapter_ids}
-    if not allowed_chapters:
-        raise ValueError("allowed_chapter_ids 不能为空")
     try:
         minimum = int(expected_min)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"expected_min 必须是整数：{expected_min!r}") from exc
     minimum = max(0, minimum)
 
-    # 知识点候选集只能在工厂里取；测试时会先建好临时/演示库。
-    allowed_kps = set(_default_kp_ids())
+    allowed_kps = set(_safe_kp_ids())
 
     def validate(data: Any) -> str | None:
         if isinstance(data, dict):

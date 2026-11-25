@@ -166,6 +166,101 @@ def insert_wrong_question(data: dict, image_path: str | None = None) -> int:
     return int(wq_id)
 
 
+def upsert_wrong_question_by_source(
+    source_question_id: str,
+    data: dict,
+    image_path: str | None = None,
+) -> int:
+    """按题目 id 幂等写入错题：同一道题再次做错只累加，不新建记录。
+
+    - 首次出现：插入一行，error_count = 1，last_seen_at 记当前时间
+    - 再次出现：error_count + 1，刷新 last_seen_at，
+                并同步题干/答案/错因/难度这些可能被改过的字段
+    - 知识点关联始终 INSERT OR IGNORE，不重复、不删除已有挂载
+
+    返回该错题记录的主键 id。
+
+    🔴 整个「查 → 插/更新 → 挂知识点」在同一个事务里完成，
+       避免并发时同一题被插成两行（唯一索引 idx_wq_source 是最后一道防线）。
+    """
+    if not source_question_id:
+        raise ValueError("source_question_id 不能为空")
+
+    steps = data.get("solution_steps")
+    if isinstance(steps, (list, tuple)):
+        steps = json.dumps(steps, ensure_ascii=False)
+    if steps is not None and not isinstance(steps, str):
+        steps = str(steps)
+
+    kp_ids = data.get("kp_ids") or []
+
+    with _tx() as conn:
+        row = conn.execute(
+            "SELECT id FROM wrong_question WHERE source_question_id = ?",
+            (source_question_id,),
+        ).fetchone()
+
+        if row is None:
+            cur = conn.execute(
+                """
+                INSERT INTO wrong_question
+                    (question_text, student_answer, correct_answer, solution_steps,
+                     error_type, difficulty, source, image_path,
+                     source_question_id, error_count, last_seen_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now','localtime'))
+                """,
+                (
+                    data.get("question_text"),
+                    data.get("student_answer"),
+                    data.get("correct_answer"),
+                    steps,
+                    data.get("error_type"),
+                    data.get("difficulty"),
+                    data.get("source"),
+                    image_path,
+                    source_question_id,
+                ),
+            )
+            wq_id = int(cur.lastrowid)
+        else:
+            wq_id = int(row["id"])
+            conn.execute(
+                """
+                UPDATE wrong_question SET
+                    question_text  = COALESCE(?, question_text),
+                    student_answer = COALESCE(?, student_answer),
+                    correct_answer = COALESCE(?, correct_answer),
+                    solution_steps = COALESCE(?, solution_steps),
+                    error_type     = COALESCE(?, error_type),
+                    difficulty     = COALESCE(?, difficulty),
+                    source         = COALESCE(?, source),
+                    image_path     = COALESCE(?, image_path),
+                    error_count    = error_count + 1,
+                    last_seen_at   = datetime('now','localtime')
+                WHERE id = ?
+                """,
+                (
+                    data.get("question_text"),
+                    data.get("student_answer"),
+                    data.get("correct_answer"),
+                    steps,
+                    data.get("error_type"),
+                    data.get("difficulty"),
+                    data.get("source"),
+                    image_path,
+                    wq_id,
+                ),
+            )
+
+        if kp_ids:
+            conn.executemany(
+                "INSERT OR IGNORE INTO wq_kp (wq_id, kp_id) VALUES (?, ?)",
+                [(wq_id, kp) for kp in kp_ids],
+            )
+
+    return wq_id
+
+
 def recent_wrong_questions(limit: int = 20) -> list[dict]:
     """最近录入的错题，新的在前。附带该题挂载的知识点名字。"""
     with _tx() as conn:
@@ -440,3 +535,34 @@ def llm_usage() -> dict:
     if row is None:
         return {"calls": 0, "tokens": 0}
     return {"calls": int(row["calls"] or 0), "tokens": int(row["tokens"] or 0)}
+
+
+def log_llm_call(
+    purpose: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    retried: int = 0,
+    success: bool = True,
+) -> None:
+    """记录一次模型调用。由 llm_client 在每次调用结束后调用。
+
+    🔴 这里只负责写库，不做任何业务判断：调用成败、是否重试都由
+       llm_client 判定后传进来。
+
+    字段与 schema.sql 的 llm_log 定义一一对应。
+    """
+    with _tx() as conn:
+        conn.execute(
+            """
+            INSERT INTO llm_log
+                (purpose, prompt_tokens, completion_tokens, retried, success)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                purpose,
+                int(prompt_tokens or 0),
+                int(completion_tokens or 0),
+                int(retried or 0),
+                1 if success else 0,
+            ),
+        )

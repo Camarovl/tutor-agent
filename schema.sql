@@ -44,6 +44,10 @@ CREATE INDEX IF NOT EXISTS idx_kp_chapter ON knowledge_point(chapter_id);
 -- ------------------------------------------------------------
 -- 3. 错题
 --    solution_steps 存 JSON 数组的文本；image_path 只存相对路径。
+--
+--    错题本按「题」去重，不是流水账：
+--    同一道题反复做错只累加 error_count、刷新 last_seen_at，
+--    否则同一题会把 wrong_question 计数与掌握度重复放大。
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS wrong_question (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +59,9 @@ CREATE TABLE IF NOT EXISTS wrong_question (
     difficulty     TEXT,                 -- easy / medium / hard（英文，供难度加权）
     source         TEXT,                 -- text / image
     image_path     TEXT,                 -- 相对路径，不存二进制
+    source_question_id TEXT,             -- 题目标识，如 qp_0001；手工录入为 NULL
+    error_count    INTEGER NOT NULL DEFAULT 1,  -- 累计做错次数
+    last_seen_at   TEXT,                 -- 最近一次做错时间
     created_at     TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     CHECK (difficulty IS NULL OR difficulty IN ('easy','medium','hard')),
     CHECK (error_type IS NULL OR error_type IN
@@ -62,6 +69,12 @@ CREATE TABLE IF NOT EXISTS wrong_question (
 );
 
 CREATE INDEX IF NOT EXISTS idx_wq_created ON wrong_question(created_at DESC);
+
+-- 同一道题只留一条记录。用部分索引：手工录入的 source_question_id 为 NULL，
+-- NULL 不参与唯一性判断，因此允许自由重复插入。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wq_source
+    ON wrong_question(source_question_id)
+    WHERE source_question_id IS NOT NULL;
 
 
 -- ------------------------------------------------------------

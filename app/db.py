@@ -318,3 +318,125 @@ def find_kp_by_id_or_name(kp_id: str, name: str) -> dict | None:
             (kp_id, name),
         ).fetchone()
     return dict(row) if row is not None else None
+
+
+# ============================================================
+# 掌握度与调用统计（只读）
+#
+# 🔴 这两段 SQL 原样搬自 app/profile.py（C₂），一个字都没改语义。
+#    profile.py 只负责把这些行转成 DataFrame 与业务判断，不再自己写 SQL。
+# ============================================================
+
+#: 掌握度聚合查询。
+#: LEFT JOIN 保证从没练过的知识点也在结果里；NULLIF 防除零；
+#: 排序不用 NULLS LAST（旧 SQLite 不认）。
+_MASTERY_SQL = """
+WITH stats AS (
+    SELECT
+        kp.id AS kp_id,
+        kp.name AS kp_name,
+        kp.chapter_id AS chapter_id,
+        c.name AS chapter_name,
+        COUNT(pl.id) AS attempts,
+        COALESCE(SUM(CASE WHEN pl.is_correct = 1 THEN 1 ELSE 0 END), 0) AS correct,
+        MAX(pl.created_at) AS last_practiced_at,
+        MAX(CASE WHEN pl.difficulty = 'medium' THEN 1 ELSE 0 END) AS has_medium,
+        MAX(CASE WHEN pl.difficulty = 'hard' THEN 1 ELSE 0 END) AS has_hard
+    FROM knowledge_point kp
+    JOIN chapter c ON c.id = kp.chapter_id
+    LEFT JOIN practice_log pl ON pl.kp_id = kp.id
+    GROUP BY kp.id, kp.name, kp.chapter_id, c.name
+),
+rated AS (
+    SELECT
+        *,
+        CASE
+            WHEN attempts = 0 THEN 0.0
+            ELSE correct * 1.0 / NULLIF(attempts, 0)
+        END AS correct_rate,
+        CASE
+            WHEN attempts = 0 THEN 0.0
+            WHEN has_hard = 1 THEN 1.15
+            WHEN has_medium = 1 THEN 1.05
+            ELSE 1.0
+        END AS difficulty_factor,
+        CASE
+            WHEN attempts = 0 THEN 0.0
+            WHEN julianday('now', 'localtime') - julianday(last_practiced_at) <= 7 THEN 1.0
+            WHEN julianday('now', 'localtime') - julianday(last_practiced_at) <= 30 THEN 0.9
+            ELSE 0.75
+        END AS decay_factor
+    FROM stats
+),
+scored AS (
+    SELECT
+        *,
+        CASE
+            WHEN attempts = 0 THEN 0.0
+            WHEN correct_rate * difficulty_factor * decay_factor > 1.0 THEN 1.0
+            ELSE correct_rate * difficulty_factor * decay_factor
+        END AS mastery
+    FROM rated
+)
+SELECT
+    kp_id,
+    kp_name,
+    chapter_id,
+    chapter_name,
+    attempts,
+    correct,
+    correct_rate,
+    difficulty_factor,
+    decay_factor,
+    mastery,
+    CASE
+        WHEN attempts < 3 THEN '样本不足'
+        WHEN mastery < 0.4 THEN '未掌握'
+        WHEN mastery < 0.7 THEN '基本掌握'
+        ELSE '已掌握'
+    END AS status
+FROM scored
+ORDER BY
+    CASE WHEN mastery IS NULL THEN 1 ELSE 0 END,
+    CASE
+        WHEN attempts < 3 THEN 3
+        WHEN mastery < 0.4 THEN 0
+        WHEN mastery < 0.7 THEN 1
+        ELSE 2
+    END,
+    mastery ASC,
+    kp_name ASC
+"""
+
+#: 模型调用累计次数 / token 用量（llm_log 是所有模型调用的流水表）。
+_LLM_USAGE_SQL = """
+SELECT
+    COUNT(*) AS calls,
+    COALESCE(SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)), 0) AS tokens
+FROM llm_log
+"""
+
+
+def mastery_rows() -> list[dict]:
+    """每个知识点的掌握度聚合行，11 列，顺序见 interfaces.md 第一节。
+
+    包含从没练过的知识点（attempts=0，各系数与 mastery 为 0.0，
+    status 为「样本不足」）——契约要求这些行必须出现，否则界面缺行。
+
+    🔴 本函数只取数据，不做 DataFrame 转换与四舍五入；那些归 profile.py。
+    """
+    with _tx() as conn:
+        rows = conn.execute(_MASTERY_SQL).fetchall()
+    return [dict(r) for r in rows]
+
+
+def llm_usage() -> dict:
+    """累计模型调用次数与 token 用量，返回 {"calls": int, "tokens": int}。
+
+    没有记录时返回零值，不报错。
+    """
+    with _tx() as conn:
+        row = conn.execute(_LLM_USAGE_SQL).fetchone()
+    if row is None:
+        return {"calls": 0, "tokens": 0}
+    return {"calls": int(row["calls"] or 0), "tokens": int(row["tokens"] or 0)}

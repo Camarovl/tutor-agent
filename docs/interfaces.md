@@ -16,23 +16,34 @@
 🔴 **本文件之外不许写 SQL。** 其他模块要数据一律调用这里的函数；
 `_tx()` 是 db.py 内部的事务封装，保持私有，不要跨模块使用。
 
-本节函数的实现都归 C₁。唯一例外是 `mastery_table()`：
-**行覆盖范围与返回列名由 C₁ 定死，实现放在第七节的 `profile.py`（C₂）** ——
-因为它属于统计逻辑，C₁ 只提供 `practice_log` 的底层查询。
+本节函数的实现都归 C₁。
+
+⚠️ **掌握度这一块的分工要看清**（两个文件各管一半）：
+
+| 谁 | 管什么 | 在哪 |
+|---|---|---|
+| C₁ | 聚合查询：`mastery_rows()` 返回 11 列原始统计，**系数与分级在 SQL 里算好** | `db.py` |
+| C₂ | 把行组装成 DataFrame、类型转换与四舍五入、`weak_points()` 取前 n | `profile.py` |
+
+🔴 系数（难度加权 / 时间衰减 / 四档阈值）之所以写在 SQL 里，是项目红线要求的
+「掌握度系数必须确定性」—— 所以不要把它挪到 Python 里重算，否则同一个知识点
+在不同调用下可能得出不同结果。
 
 | 函数 | 说明 |
 |---|---|
 | `get_conn() -> sqlite3.Connection` | 返回已开启外键约束、支持字典式取值的连接。🔴 每个新连接都会执行 `PRAGMA foreign_keys = ON` |
 | `init_db() -> None` | 按 schema.sql 建表。幂等，可反复调用 |
 | `insert_chapters(list) -> int` | 灌入 15 个归类抽屉（不是知识点库） |
-| `insert_wrong_question(data, image_path=None) -> int` | 写入错题及其知识点关联，返回新记录 id |
+| `insert_wrong_question(data, image_path=None) -> int` | 写入错题及其知识点关联。⚠️ 只用于**手工录入**（没有题号，允许重复）；从练习错题回流请用下面的 upsert |
 | `recent_wrong_questions(limit=20) -> list[dict]` | 最近录入的错题 |
 | `wrong_question_count() -> int` | 错题总数 |
 | `log_practice(kp_id, is_correct, question_ref=None, difficulty=None, duration_sec=None)` | 写练习记录 |
-| `mastery_table() -> pandas.DataFrame` | 🔴 **列名已定死，见下方「mastery_table 返回列」** |
-| `weak_points(n) -> list[dict]` | 排除样本不足后掌握度最低的 n 个 |
-| `kp_error_distribution() -> list[dict]` | 错题按知识点分布 + 主要错因 |
-| `cost_summary() -> dict` | 累计调用次数与 token 用量 |
+| `mastery_rows() -> list[dict]` | 掌握度聚合行，11 列（见第七节）。系数与分级已在 SQL 里算好 |
+| `llm_usage() -> dict` | 累计调用次数与 token 用量：`{"calls": int, "tokens": int}`。空表返回零值 |
+| `log_llm_call(purpose, prompt_tokens, completion_tokens, retried=0, success=True) -> None` | 🔴 由 `llm_client` 每次调用后写入。只写库，不做业务判断 |
+| `upsert_wrong_question_by_source(source_question_id, data, image_path=None) -> int` | 🔴 同一道题再次做错只累加 `error_count`、刷新 `last_seen_at`，不新建记录。手工录入没有题号，走 `insert_wrong_question()` |
+| ~~`kp_error_distribution()`~~ | ⏳ **尚未实现**，见 `docs/limitations.md`。错因分布图暂未做，不必等它 |
+| ~~`cost_summary()`~~ | ⚠️ 已改名为 `llm_usage()`，本名不再使用 |
 
 ### 表结构（六张，知识点是两级的）
 
@@ -42,7 +53,13 @@ knowledge_point(id PK, name UNIQUE, chapter_id FK,    -- 🔴 运行时自动新
                 explain, created_from, created_at)
 wrong_question(id PK, question_text, student_answer, correct_answer,
                solution_steps, error_type, difficulty, source,
-               image_path, created_at)
+               image_path, created_at,
+               source_question_id,      -- 题目标识（如 qp_0001），手工录入为 NULL
+               error_count,             -- 累计做错次数，默认 1
+               last_seen_at)            -- 最近一次做错时间
+               -- 🔴 source_question_id 上有部分唯一索引（仅非 NULL 行），
+               --    所以同一道题最多一条记录；该索引由 db.py 在迁移后创建，
+               --    不写在 schema.sql 里（老库要先补列才能建索引）
 wq_kp(wq_id FK, kp_id FK)                             -- 多对多
 practice_log(id PK, kp_id FK, question_ref, is_correct, difficulty,
              duration_sec, created_at)
@@ -175,8 +192,13 @@ confidence / source / degraded / note`
 
 | 函数 | 说明 |
 |---|---|
-| `make_intake_validator(allowed_kp_ids) -> callable` | 输入解析后的 dict，合规返回 `None`，不合规返回错误描述字符串（会被回喂给模型重试） |
-| `make_practice_validator(allowed_chapter_ids, expected_min=1) -> callable` | 校验生成的练习题 |
+| `make_intake_validator(allowed_kp_ids=None) -> callable` | 输入解析后的 dict，合规返回 `None`，不合规返回错误描述字符串（会被回喂给模型重试） |
+| `make_practice_validator(allowed_chapter_ids=None, expected_min=1) -> callable` | 校验生成的练习题 |
+
+⚠️ 两个工厂的 `allowed_*` 都是**可选**参数：不传时会去库里读候选集；
+🔴 **空库（还没跑 `seed_data.py`）时也必须能构造成功**，把候选集当空集合，
+等真正校验到越界项时再报错 —— 不要在构造阶段就抛异常，否则干净 clone 下
+页面和自检都起不来。
 
 拦截项：不是合法 JSON / 缺必填字段 / 🔴 `knowledge_ids` 越界 / 超过 3 个 /
 `new_concepts` 的 `chapter_id` 不在章节集内 / `error_type` 不在枚举 /
@@ -188,11 +210,12 @@ confidence / source / degraded / note`
 
 | 函数 | 说明 |
 |---|---|
-| `mastery_table() -> DataFrame` | 🔴 **实现归 C₂**。掌握度 = 基础正确率 × 难度加权 × 时间衰减；行覆盖范围与返回列名由 C₁ 定死（见第一节），改动列名等于改接口 |
+| `mastery_table() -> DataFrame` | 🔴 **只做组装**：调 `db.mastery_rows()` 拿 11 列，转 DataFrame 并做类型转换/四舍五入。系数与四档分级已在 SQL 里算好，**不要在这里重算**（见第一节分工说明） |
+| `weak_points(n) -> list[dict]` | 排除「样本不足」后，按掌握度升序取前 n 个。排序三级键见下方 |
 | `summary_text() -> dict` | 界面顶部指标卡数据，键名见下方「summary_text 返回」 |
 | `build_practice_session(count) -> (list[dict], str)` | 返回题目列表 + 来源说明（如「本次来自薄弱知识点」） |
 | `grade(item, user_answer) -> bool` | 客观判分，规则见下方「题目结构与判分」 |
-| `record_result(items, answers) -> list[bool]` | 判分 + 回写 + 错题回流；返回每题是否答对 |
+| `record_result(items, answers) -> list[bool]` | 判分 + 回写 + 错题回流；返回每题是否答对。🔴 做错的题若带题目 id，走 `db.upsert_wrong_question_by_source()` **按题去重**；没有 id 的才走 `insert_wrong_question()` |
 
 ### 🔴 `summary_text()` 返回（界面顶部指标卡，D 直接按这些键读）
 
@@ -360,6 +383,26 @@ python -c "from app import stubs; import json; print(json.dumps(stubs.sources(),
 | `recent_wrong_questions()` / `wrong_question_count()` | `app.db` | C₁ |
 | `is_configured()` / `missing_config_keys()` | 本地读环境变量（不联网） | D |
 | `sources()` / `problems()` / `summary()` / `mode()` / `facade()` / `db_ready()` | 本节自有工具函数 | D |
+
+### 当前接入进度
+
+用下面这条命令随时查真值，不要靠记忆：
+
+```powershell
+python -c "from app import stubs; print(stubs.summary()); print(stubs.problems())"
+```
+
+截至 C₁ / C₂ / D 三条线合并完成时的状态：**真 9 / 桩 4**
+
+| 状态 | 函数 | 缺谁 |
+|---|---|---|
+| ✅ 真实现 | `mastery_table` `summary_text` `build_practice_session` `grade` `record_result` | C₂ 已交 |
+| ✅ 真实现 | `all_knowledge_points` `chapter_candidates` `recent_wrong_questions` `wrong_question_count` | C₁ 已交 |
+| 🧪 仍是桩 | `answer` / `analyze_text` / `analyze_image` / `commit` | **B 还没交** |
+
+⚠️ `summary_text()` 里的 `llm_calls` / `llm_tokens` 要等 B 的 `llm_client`
+每次调用后写 `db.log_llm_call()` 才会有数字。在那之前它们恒为 0 —— 这是**预期行为**，
+不是 bug。页面上的成本统计为空时不要误判成功能没做。
 
 ### 待对齐
 

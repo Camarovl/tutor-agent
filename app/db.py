@@ -75,11 +75,59 @@ class _tx:
 # ============================================================
 # 建库
 # ============================================================
+def _migrate(conn: sqlite3.Connection) -> None:
+    """补齐老库缺的列。幂等：列已存在就跳过。
+
+    schema.sql 用的是 CREATE TABLE IF NOT EXISTS —— 表已存在就整段跳过，
+    不会给老库补新列。所以升级过 schema 之后，跑过 seed_data.py 的机器
+    必须靠这里补齐，否则一查 wrong_question 就报 no such column。
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(wrong_question)")}
+    added = []
+    for name, ddl in (
+        ("source_question_id", "TEXT"),
+        ("error_count", "INTEGER NOT NULL DEFAULT 1"),
+        ("last_seen_at", "TEXT"),
+    ):
+        if name not in cols:
+            # 列名与类型是写死的常量，不是外部输入；
+            # SQLite 的 ALTER TABLE ADD COLUMN 不接受 ? 占位参数
+            conn.execute(f"ALTER TABLE wrong_question ADD COLUMN {name} {ddl}")
+            added.append(name)
+    if added:
+        print(f"[db] 迁移：wrong_question 补列 {added}")
+
+
+#: 同一道题只留一条记录。用部分索引：手工录入的 source_question_id 为 NULL，
+#: NULL 不参与唯一性判断，因此允许自由重复插入。
+#: 🔴 必须等到 _migrate() 补完列再建，否则老库上会报 no such column。
+_WQ_SOURCE_INDEX = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wq_source
+    ON wrong_question(source_question_id)
+    WHERE source_question_id IS NOT NULL;
+"""
+
+
+def _ensure_indexes(conn: sqlite3.Connection) -> None:
+    """建依赖新列的索引。放在 _migrate() 之后执行。"""
+    conn.executescript(_WQ_SOURCE_INDEX)
+
+
 def init_db() -> None:
-    """按 schema.sql 建表。幂等：反复调用不会报错、不会丢数据。"""
+    """建表 + 补列 + 建索引。幂等：反复调用不会报错、不会丢数据。
+
+    三步的顺序是关键：
+      ① executescript(schema)  新库一次建到位；老库因 IF NOT EXISTS 跳过
+      ② _migrate               老库补上 schema 新增的列
+      ③ _ensure_indexes        索引引用了新列，必须在补列之后建
+
+    _tx 退出时已自动 commit，这里不再重复提交。
+    """
     sql = SCHEMA_PATH.read_text(encoding="utf-8")
     with _tx() as conn:
-        conn.executescript(sql)
+        conn.executescript(sql)      # ① 建表（新库一次到位）
+        _migrate(conn)               # ② 老库补列
+        _ensure_indexes(conn)        # ③ 补完列才能建索引
 
 
 def insert_chapters(chapters: list[dict]) -> int:

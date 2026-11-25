@@ -70,11 +70,9 @@ CREATE TABLE IF NOT EXISTS wrong_question (
 
 CREATE INDEX IF NOT EXISTS idx_wq_created ON wrong_question(created_at DESC);
 
--- 同一道题只留一条记录。用部分索引：手工录入的 source_question_id 为 NULL，
--- NULL 不参与唯一性判断，因此允许自由重复插入。
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wq_source
-    ON wrong_question(source_question_id)
-    WHERE source_question_id IS NOT NULL;
+-- ⚠️ idx_wq_source（source_question_id 上的部分唯一索引）不写在这里。
+--    老库上表的这些列可能还不存在，在本文件里建会直接报 no such column。
+--    它由 app/db.py 的 _ensure_indexes() 在补列之后创建，见 init_db()。
 
 
 -- ------------------------------------------------------------

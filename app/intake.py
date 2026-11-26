@@ -1,4 +1,4 @@
-"""功能② 错题录入与归类 —— 模型抽取 → 人工确认 → 落库。
+﻿"""功能② 错题录入与归类 —— 模型抽取 → 人工确认 → 落库。
 
 维护人：B
 契约：docs/interfaces.md 第五节
@@ -20,6 +20,13 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from app import db, knowledge, llm_client, prompts
+
+#: C₂ 的校验器（已随 main 落地）。导入失败不影响本模块可用性 ——
+#: 退回到本文件的 _build_validator() 兜底，两条路径规则一致（见契约第六节）。
+try:
+    from app.schemas import make_intake_validator as _schemas_make_intake_validator
+except Exception:  # noqa: BLE001 —— 未落地 / 导入期报错都退兜底
+    _schemas_make_intake_validator = None
 
 # ============================================================
 # 注入阈值 —— 改这两个数只影响提示词长度，不影响数据
@@ -106,19 +113,23 @@ def _degraded(reason: str, source: str = "text", *, looks_correct: bool = False)
 # ============================================================
 # 校验器
 # ============================================================
-#: C₂ 的 app/schemas.py 落地后，这里会换成它的 make_intake_validator。
-#: 切换方式（等它进 main 再取消注释）：
-#
-#   try:                                                    # pragma: no cover
-#       from app.schemas import make_intake_validator       # noqa: F401
-#   except ImportError:                                     # 尚未落地，用本文件的兜底
-#       make_intake_validator = None
-#
-#   然后在 _build_validator() 里优先用它：
-#       if make_intake_validator is not None:
-#           return make_intake_validator(sorted(allowed_kp_ids))
-#
-# 两边规则必须一致（见契约第六节拦截项），否则会出现"本地过了、正式校验打回"的分裂。
+#: C₂ 的 app/schemas.py 已随 main 落地，默认走它的 make_intake_validator。
+#: 本文件的 _build_validator() 只在「schemas 导入失败」或「构造时读不到章节/知识点」时兜底。
+#: ⚠️ 两条路径的规则必须一致（契约第六节拦截项）；C₂ 的版本要求 solution_steps 非空即可，
+#:    本文件兜底版要求 ≥2 步 —— 更严，但只在兜底时生效，不影响正常路径。
+
+
+def _make_validator(
+    allowed_kp_ids: set[str],
+    allowed_chapter_ids: set[str],
+) -> Callable[[dict], str | None]:
+    """优先用 C₂ 的校验器；构造失败（库未建等）就退回本地兜底。"""
+    if _schemas_make_intake_validator is not None:
+        try:
+            return _schemas_make_intake_validator(sorted(allowed_kp_ids))
+        except Exception:  # noqa: BLE001 —— 读不到章节/知识点时不让录入整体挂掉
+            pass
+    return _build_validator(allowed_kp_ids, allowed_chapter_ids)
 
 
 def _build_validator(
@@ -389,7 +400,7 @@ def analyze_text(
             purpose="intake",
             json_mode=True,
             schema_hint=prompts.INTAKE_SCHEMA_HINT,
-            validator=_build_validator(allowed_kp_ids, allowed_chapter_ids),
+            validator=_make_validator(allowed_kp_ids, allowed_chapter_ids),
         )
         data = llm_client.extract_json(result.text)
         if data is None:
@@ -429,7 +440,7 @@ def analyze_image(image_bytes: bytes, extra_note: str = "") -> IntakeDraft:
             system=prompts.build_intake_system(chapters, points),
             json_mode=True,
             schema_hint=prompts.INTAKE_SCHEMA_HINT,
-            validator=_build_validator(allowed_kp_ids, allowed_chapter_ids),
+            validator=_make_validator(allowed_kp_ids, allowed_chapter_ids),
         )
         data = llm_client.extract_json(result.text)
         if data is None:

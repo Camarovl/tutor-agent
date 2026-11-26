@@ -201,25 +201,6 @@ python tests/offline_check.py     # 期望全部通过、退出码 0
 
 ---
 
-## 七点五、文档改动只走一条固定分支
-
-`docs/`、`README.md`、`AGENTS.md`、`tests/README.md`、`plan/` 的修改
-**统一用 `docs/contract-practice-item` 这一条分支**，不要每次新开。
-
-```bash
-git switch docs/contract-practice-item
-git merge --ff-only origin/main        # 开工前先快进
-git add <文档> && git commit -m "docs: ..."
-git push origin docs/contract-practice-item
-```
-
-🔴 合并它时必须用普通 merge，**不要 squash / rebase** ——
-那会让分支与 main 分叉，下次无法快进，只能强推或重建分支（都不允许）。
-
-⚠️ 这条分支只放文档；改代码另开 `feature/xxx` / `fix/xxx`。
-
----
-
 ## 八、相关文档
 
 ### 先看清目录结构

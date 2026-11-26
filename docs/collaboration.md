@@ -50,33 +50,6 @@ git push -u origin feature/xxx
 
 也别让自己的 AI 替你合并 —— 它有你的凭据，完全有能力绕过流程。
 
-### 文档改动用固定分支 `docs/contract-practice-item`
-
-文档（`docs/`、`README.md`、`AGENTS.md`、`tests/README.md`、`plan/`）的修改
-**不再每次新开分支**，统一累积在这一条分支上，做完一批开一个 PR。
-
-理由：文档改动零散、彼此关联，每次新建分支会让分支列表越来越乱，
-合并后还要清理一堆残留分支。
-
-流程：
-
-```bash
-# 每次开工先快进到最新 main（上次的内容已经合并过了）
-git switch docs/contract-practice-item
-git merge --ff-only origin/main      # 只快进，不产生合并提交
-
-# 改文档、提交、推送
-git add <文件> && git commit -m "docs: ..."
-git push origin docs/contract-practice-item
-```
-
-🔴 **合并这条分支时必须用普通 merge，不要用 Squash and merge / Rebase and merge。**
-squash 或 rebase 会让分支与 main 分叉，下次就无法 `--ff-only` 快进，
-只剩「强推」或「重建分支」两条路 —— 前者全组禁用，后者违背这条规矩。
-
-⚠️ 这条分支**只放文档**。需要改代码时另开 `feature/xxx` / `fix/xxx`，
-不要把代码混进文档 PR。
-
 ---
 
 ## 三、跨人对接：靠文件，不靠对话

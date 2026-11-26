@@ -1,6 +1,8 @@
 # 协作规矩
 
-多人各自使用自己的电脑开发，靠 GitHub 同步。以下规矩是**硬要求**，不是建议。
+多人各自使用自己的电脑开发，靠 GitHub 同步。
+涉及「主线安全、密钥、不可逆操作」的部分是硬要求；其余是团队约定，
+双方商量着来就行。
 
 🤖 本文的机器可读版本是根目录的 `AGENTS.md`，组员的 AI 助手会自动读取它。
 
@@ -30,7 +32,7 @@ git pull origin main        # 把主干最新进展并进来
 | 动作 | 权限归属 |
 |---|---|
 | 在自己分支上 commit / push | ✅ 每个人 |
-| **创建 Pull Request** | **只有维护者（组长）** |
+| **创建 Pull Request** | **只有维护者（组长）**：组员的职责到 push 就结束 |
 | **点 Merge** | **只有维护者（组长）** |
 | 直推 `main` | ❌ 机器已拦截（分支保护），谁都推不动 |
 | `git push --force` / `git reset --hard` 后推送 | 🚫 **全组禁用** |
@@ -42,7 +44,8 @@ git switch -c feature/xxx
 # ...干活...
 git add <文件> && git commit -m "feat: ..."
 git push -u origin feature/xxx
-# 然后同步一句「feature/xxx 推好了，本地跑通了」，等维护者合并
+# 然后同步一句「feature/xxx 推好了，本地跑通了」
+# 维护者建 PR 并合并；组员不建 PR
 ```
 
 ⚠️ GitHub 网页上那个绿色的 **Merge pull request** 按钮对协作者也是可点的（Write 权限自带），
@@ -62,8 +65,8 @@ git push -u origin feature/xxx
 | 队友的代码还没写好 | 在 `app/stubs.py` 造桩函数返回预期形状的数据，先把界面跑起来 |
 | 每天收工 | 让 AI 生成三句话变更总结发到群里 |
 
-🚫 **禁止**：让两个 AI 互相传话、把自己的 AI 输出截图让队友的 AI 解读、
-绕过契约文件猜测别人函数的行为。
+🚫 **要避免的**：绕过 `docs/interfaces.md` 去猜队友函数的签名。
+截图或口头转述容易失真，能直接引用契约就别转述。
 
 ---
 
@@ -79,7 +82,6 @@ git push -u origin feature/xxx
 | `app/schemas.py`、`app/profile.py`、`tests/offline_check.py` | C₂ |
 | `Dockerfile`、`.dockerignore`、`requirements.txt`、各 ignore 文件 | E |
 | `README.md`、`AGENTS.md`、`docs/*`（契约除外） | A |
-| `docs/` | A |
 
 🔴 **不要用格式化工具重排整个文件** —— 会产生几百行无关 diff，冲突时几乎无法手工合并。
 
@@ -103,9 +105,8 @@ type 取值：`feat` 新功能 · `fix` 修 bug · `docs` 文档 · `refactor` �
 ❌ "update" / "111" / "改了点东西"
 ```
 
-每周每人至少 **3 个真实功能提交**（feat/fix/refactor 才算，docs 和 chore 不计）。
 仓库会被直接 clone 下来运行，提交历史就是开发过程本身 —— 攒到最后一次性上传，
-等于交了一个看不出怎么做出来的东西。
+等于交了一个看不出怎么做出来的东西。所以边做边提交，别压到最后。
 
 ---
 
@@ -145,14 +146,13 @@ git log -p | Select-String -Pattern "sk-[A-Za-z0-9]{20,}"       # 扫历史而�
 
 价值不在于选对方案，而在于**在它动手前发现它理解错了**。
 
-**跑通之后必补一段讲解**：
+**跑通之后建议让 AI 讲一遍**（不强制）：
 
 ```text
 逐段用大白话解释刚才写的代码。标出：
 ① 哪里调用了外部服务或读写数据库
 ② 出错会怎样、有没有兜底
 ③ 哪些数字是规则阈值
-然后出 3 道题考我。
 ```
 
 理由很硬：AI 写完这一遍，下次改它的还是你。看不懂自己交出去的东西，
@@ -172,5 +172,5 @@ git log -p | Select-String -Pattern "sk-[A-Za-z0-9]{20,}"       # 扫历史而�
 | 截图搜不到答案 | 粘贴文本更准，而且 AI 能直接帮你排查 |
 | 命令行连不上 GitHub | 浏览器能打开网页 ≠ 命令行能 push。检查代理软件是否常驻运行 |
 | 需要撤销已推送的改动 | 用 `git revert <commit>`，绝不用 force push |
-| 卡住超过 90 分钟 | 必须求助，不许闷头耗 |
+| 卡住很久（比如一小时以上） | 建议求助，别一个人闷头耗 |
 | 想加登录/用户系统/RAG | 先问组长。这些通常是坑，见 `docs/limitations.md` |

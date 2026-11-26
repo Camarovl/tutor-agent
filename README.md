@@ -35,19 +35,19 @@ AGENTS.md                          🤖 组员的 AI 自动读取的规则文件
 
 ### 当前开发进度
 
-仓库已具备开工条件，但**业务代码尚未开始写** —— 那是各人从第 4 步起各自的工作。
+**当前状态：四条业务线已全部合并进 main，端到端可跑。**
+下面这张表记录的是交付内容是否就位，不再按开发步骤标注。
 
 | 部分 | 状态 |
 |---|---|
 | 目录骨架、依赖、忽略规则、Dockerfile | ✅ 就位 |
 | 15 个归类抽屉 `data/chapters.json` | ✅ 就位 |
-| 函数契约 `docs/interfaces.md` | ✅ 九节骨架就位，`[TODO]` 由各维护人补 |
-| `app/` 下九个模块 | ⏳ 待第 4 步按分工创建 |
-| `schema.sql`、`streamlit_app.py`、`seed_data.py` | ⏳ 待第 4~5 步 |
-| `tests/offline_check.py` | ⏳ 待第 5 步由 C₂ 创建 |
+| 函数契约 `docs/interfaces.md` | ✅ 九节完成，与实现对齐 |
+| `app/` 下九个模块 + `ui_theme.py` | ✅ 全部就位 |
+| `schema.sql`、`streamlit_app.py`、`seed_data.py` | ✅ 就位 |
+| `tests/offline_check.py` | ✅ 就位，19 项检查全过 |
 
-所以照第三节执行时，**现在只有前两步能跑通**（装依赖、配 `.env`）；
-第 3~5 步要等对应文件被创建出来，那正是第 4 步要做的第一件事。
+照第三节执行时，**五步全部能跑通**（装依赖 → 配 `.env` → 灌演示数据 → 启动 → 离线自检）。
 
 ---
 
@@ -91,6 +91,7 @@ AGENTS.md                          🤖 组员的 AI 自动读取的规则文件
 Streamlit        界面（纯 Python，无前端框架）
 SQLite           单文件数据库，裸 SQL，不用 ORM
 openai SDK       走 OpenAI 兼容协议对接任意模型服务
+Altair           掌握度对比图表（Streamlit 官方图表栈）
 Dockerfile       容器化交付
 Python 3.11+
 ```
@@ -111,7 +112,9 @@ app/
   qa.py             ① 知识点问答
   intake.py         ② 错题录入与归类
   profile.py        ③④ 掌握度与练习
-  stubs.py          桩函数（队友代码未就绪时先用它跑界面）
+  stubs.py          门面 + 桩（TUTOR_BACKEND=stub 时用它离线演示界面）
+  ui_theme.py       视觉层：CSS 与主题，只做外观，可整段删除回退
+.streamlit/         主题配置（视觉层的一部分）
 schema.sql          建表语句
 data/               chapters.json（15 章）、question_bank.json（题库）
 seed_data.py        演示数据一键灌入
@@ -161,7 +164,7 @@ $env:LLM_MODEL="deepseek-chat"
 
 🔴 `.env` 已被 `.gitignore` 排除，**切勿提交真实密钥**。
 
-### 3. 初始化演示数据 ⏳ 待第 5 步
+### 3. 初始化演示数据
 
 ```bash
 python seed_data.py
@@ -169,9 +172,9 @@ python seed_data.py
 
 输出各类数据条数和当前最薄弱的三个知识点。脚本可重复运行。
 
-⏳ 脚本由 D 在第 5 步创建。在那之前这一步会报「找不到文件」，属正常。
+脚本幂等：库里已有知识点时会跳过，不会覆盖你自己的记录。
 
-### 4. 启动 ⏳ 待第 4 步
+### 4. 启动
 
 ```bash
 streamlit run streamlit_app.py
@@ -179,9 +182,9 @@ streamlit run streamlit_app.py
 
 浏览器打开 http://localhost:8501 。
 
-⏳ 入口文件由 D 在第 4 步创建（先做四个标签页的空壳）。
+四个标签页：① 知识点问答 ② 错题录入 ③ 掌握度分析 ④ 针对性练习。
 
-### 5. 离线自检（不需要模型服务）⏳ 待第 5 步
+### 5. 离线自检（不需要模型服务）
 
 ```bash
 python tests/offline_check.py
@@ -190,7 +193,7 @@ python tests/offline_check.py
 覆盖数据完整性、掌握度查询边界、输出校验器、判分逻辑。
 🔴 每天开工先跑一次 —— 红了说明主干是坏的，先报告别硬写。
 
-⏳ 脚本由 C₂ 在第 5 步创建；在那之前仓库里还没有它。
+不需要 API Key、不联网，19 项检查覆盖数据完整性、掌握度、校验器、判分与落库。
 
 ---
 
@@ -240,7 +243,7 @@ docker exec tutor python seed_data.py
 | V7 | `python tests/offline_check.py` | 全部通过（共 19 项），退出码 0 |
 | V8 | `docker run` 后浏览器打开 8501 | 完整可用 |
 
-状态：V1~V6、V8 待对应功能完成后逐项验证；V7 的自检脚本在第 5 步创建后才可运行。
+状态：V1~V7 已在开发机上逐项验证通过；V8（Docker）需在装有 Docker 的机器上验证一次。
 
 ---
 
@@ -252,7 +255,7 @@ docker exec tutor python seed_data.py
 | **B** | 模型调用封装、提示词设计与调优、抽取与问答逻辑 | `app/llm_client.py`、`prompts.py`、`qa.py`、`intake.py` |
 | **C₁** 🔴先动 | 数据地基：表结构、连接管理、章节灌入、知识点动态挂载与查重 | `schema.sql`、`db.py`、`knowledge.py`、`data/chapters.json` |
 | **C₂** | 统计与判定：输出校验器、掌握度估计、出题选池、判分回写、离线自检脚本 | `app/schemas.py`、`profile.py`、`tests/offline_check.py` |
-| **D** | 界面交互、桩函数体系、演示数据 | `streamlit_app.py`、`stubs.py`、`seed_data.py`、`data/question_bank.json` |
+| **D** | 界面交互、视觉层、门面与桩、演示数据 | `streamlit_app.py`、`app/ui_theme.py`、`.streamlit/config.toml`、`stubs.py`、`seed_data.py`、`data/question_bank.json` |
 | **E** | 依赖版本、忽略规则、Docker、部署上线、汇报材料排版 | `Dockerfile`、`requirements.txt`、`.gitignore`、`.dockerignore`、`.env.example` |
 
 💡 本项目 **A 与 E 由同一人承担**。职责仍按两个角色分开列，是为了看清哪些属于配置类工作 ——

@@ -352,7 +352,7 @@ confidence / source / degraded / note`
 ```
 sources()  -> {函数名: "real" | "stub"}        # 格式固定，界面靠它判断，别改
 problems() -> {函数名: 原因}                    # 只列「模块存在但接不上」，正常缺文件不列
-summary()  -> "真 9 / 桩 4（其中 1 个异常）"    # 一行汇总，异常为 0 时不带后半句
+summary()  -> "真 13 / 桩 0（其中 N 个异常）"    # 一行汇总，异常为 0 时不带后半句
 ```
 
 `problems()` 判三种情况：模块文件不存在 → 正常，不记录；模块存在但**导入报错** → 记录
@@ -392,19 +392,23 @@ python -c "from app import stubs; import json; print(json.dumps(stubs.sources(),
 python -c "from app import stubs; print(stubs.summary()); print(stubs.problems())"
 ```
 
-截至 C₁ / C₂ / D 三条线合并完成时的状态：**真 9 / 桩 4**
+**A / B / C₁ / C₂ / D 五条线全部合并后的状态：真 13 / 桩 0。**
 
-| 状态 | 函数 | 缺谁 |
+| 状态 | 函数 | 说明 |
 |---|---|---|
-| ✅ 真实现 | `mastery_table` `summary_text` `build_practice_session` `grade` `record_result` | C₂ 已交 |
-| ✅ 真实现 | `all_knowledge_points` `chapter_candidates` `recent_wrong_questions` `wrong_question_count` | C₁ 已交 |
-| 🧪 仍是桩 | `answer` / `analyze_text` / `analyze_image` / `commit` | **B 还没交** |
+| ✅ 真实现 | `mastery_table` `summary_text` `build_practice_session` `grade` `record_result` | C₂ |
+| ✅ 真实现 | `all_knowledge_points` `chapter_candidates` `recent_wrong_questions` `wrong_question_count` | C₁ |
+| ✅ 真实现 | `answer` / `analyze_text` / `analyze_image` / `commit` | B |
 
-⚠️ `summary_text()` 里的 `llm_calls` / `llm_tokens` 要等 B 的 `llm_client`
-每次调用后写 `db.log_llm_call()` 才会有数字。在那之前它们恒为 0 —— 这是**预期行为**，
-不是 bug。页面上的成本统计为空时不要误判成功能没做。
+⚠️ 桩只在 `TUTOR_BACKEND=stub`（演示兜底模式）下才会被走。
+判断标准始终是 `stubs.summary()` 的实际输出，**不要照着这张表推断**。
+
+⚠️ `summary_text()` 里的 `llm_calls` / `llm_tokens` 读的是 `llm_log` 表，
+由 `llm_client` 每次调用后调 `db.log_llm_call()` 写入 —— 已经接通，数字会随使用增长。
+（已知偏差：因校验失败而重试的那几次暂未记账，成本会被略低估，见 `docs/limitations.md`。）
 
 ### 待对齐
 
-`answer()` 的 `style` 参数目前由界面传中文 `"简洁"` / `"详细"` 原样透传。
-B 的 `qa.py` 落地后若改成英文枚举，只改 `app/stubs.py` 门面一处，界面不动。
+`answer()` 的 `style` 参数目前由界面传中文 `"简洁"` / `"详细"` 原样透传，
+`prompts.QA_STYLE_HINTS` 的键就是这两个中文值（已上线，现状一致）。
+若将来要改成英文枚举，需同时改 `prompts.py` 与 `stubs.py` 门面，界面不用动。

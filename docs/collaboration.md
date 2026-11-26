@@ -32,7 +32,7 @@ git pull origin main        # 把主干最新进展并进来
 | 动作 | 权限归属 |
 |---|---|
 | 在自己分支上 commit / push | ✅ 每个人 |
-| 创建 Pull Request | ✅ 谁都可以：不改变主干，只是把改动摊开给人看 |
+| **创建 Pull Request** | **只有维护者（组长）**：组员的职责到 push 就结束 |
 | **点 Merge** | **只有维护者（组长）** |
 | 直推 `main` | ❌ 机器已拦截（分支保护），谁都推不动 |
 | `git push --force` / `git reset --hard` 后推送 | 🚫 **全组禁用** |
@@ -44,7 +44,8 @@ git switch -c feature/xxx
 # ...干活...
 git add <文件> && git commit -m "feat: ..."
 git push -u origin feature/xxx
-# 然后同步一句「feature/xxx 推好了，本地跑通了」，等维护者合并
+# 然后同步一句「feature/xxx 推好了，本地跑通了」
+# 维护者建 PR 并合并；组员不建 PR
 ```
 
 ⚠️ GitHub 网页上那个绿色的 **Merge pull request** 按钮对协作者也是可点的（Write 权限自带），

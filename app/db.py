@@ -434,8 +434,11 @@ def insert_kp(
     chapter_id: str,
     explain: str | None,
     created_from: str,
-) -> None:
-    """新建一个知识点。
+) -> str:
+    """新建一个知识点，返回写入的 kp_id。
+
+    返回值与其他 insert 函数（insert_chapters / insert_wrong_question 等）
+    保持一致，调用方可以直接拿去用，不必自己回查。
 
     🔴 外键保证 chapter_id 必须是已存在的章节；撞 id 或 name 会抛
     sqlite3.IntegrityError，由调用方决定怎么处理（并发复用属于正常情况）。
@@ -448,6 +451,7 @@ def insert_kp(
             """,
             (kp_id, name, chapter_id, explain, created_from),
         )
+    return kp_id
 
 
 def find_kp_by_id_or_name(kp_id: str, name: str) -> dict | None:

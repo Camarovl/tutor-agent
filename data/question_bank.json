@@ -20,37 +20,6 @@
   {
     "id": "qp_0002",
     "type": "choice",
-    "chapter_id": "ch_function_limit",
-    "kp_ids": [
-      "kp_等价无穷小替换"
-    ],
-    "stem": "求极限 $\\lim_{x\\to 0}\\frac{1-\\cos x}{x^2}$",
-    "options": {
-      "A": "0",
-      "B": "$\\frac{1}{2}$",
-      "C": "1",
-      "D": "2"
-    },
-    "answer": "B",
-    "explanation": "1-cos x ~ x²/2。",
-    "difficulty": "medium"
-  },
-  {
-    "id": "qp_0003",
-    "type": "fill",
-    "chapter_id": "ch_function_limit",
-    "kp_ids": [
-      "kp_等价无穷小替换"
-    ],
-    "stem": "求极限 $\\lim_{x\\to 0}\\frac{\\tan 3x}{2x}$（填数值）",
-    "options": {},
-    "answer": "3/2",
-    "explanation": "tan3x ~ 3x，3x/2x = 3/2。",
-    "difficulty": "easy"
-  },
-  {
-    "id": "qp_0004",
-    "type": "choice",
     "chapter_id": "ch_mean_value",
     "kp_ids": [
       "kp_洛必达法则"
@@ -67,38 +36,7 @@
     "difficulty": "easy"
   },
   {
-    "id": "qp_0005",
-    "type": "choice",
-    "chapter_id": "ch_mean_value",
-    "kp_ids": [
-      "kp_洛必达法则"
-    ],
-    "stem": "求极限 $\\lim_{x\\to\\infty}\\frac{x^2}{e^x}$",
-    "options": {
-      "A": "0",
-      "B": "1",
-      "C": "2",
-      "D": "∞"
-    },
-    "answer": "A",
-    "explanation": "两次洛必达后分子为常数、分母仍指数增长。",
-    "difficulty": "hard"
-  },
-  {
-    "id": "qp_0006",
-    "type": "fill",
-    "chapter_id": "ch_mean_value",
-    "kp_ids": [
-      "kp_洛必达法则"
-    ],
-    "stem": "求极限 $\\lim_{x\\to 0}\\frac{e^x-1}{x}$（填数值）",
-    "options": {},
-    "answer": "1",
-    "explanation": "0/0 型，洛必达得 e^x → 1。",
-    "difficulty": "easy"
-  },
-  {
-    "id": "qp_0007",
+    "id": "qp_0003",
     "type": "choice",
     "chapter_id": "ch_mean_value",
     "kp_ids": [
@@ -116,38 +54,7 @@
     "difficulty": "medium"
   },
   {
-    "id": "qp_0008",
-    "type": "choice",
-    "chapter_id": "ch_mean_value",
-    "kp_ids": [
-      "kp_泰勒公式"
-    ],
-    "stem": "$e^x$ 的麦克劳林级数第二项系数是？",
-    "options": {
-      "A": "1",
-      "B": "$\\frac{1}{2}$",
-      "C": "$\\frac{1}{6}$",
-      "D": "0"
-    },
-    "answer": "B",
-    "explanation": "e^x = 1 + x + x²/2! + …。",
-    "difficulty": "easy"
-  },
-  {
-    "id": "qp_0009",
-    "type": "fill",
-    "chapter_id": "ch_mean_value",
-    "kp_ids": [
-      "kp_泰勒公式"
-    ],
-    "stem": "用泰勒公式求 $\\lim_{x\\to 0}\\frac{e^x-1-x}{x^2}$（填数值）",
-    "options": {},
-    "answer": "1/2",
-    "explanation": "分子 ~ x²/2，极限 1/2。",
-    "difficulty": "medium"
-  },
-  {
-    "id": "qp_0010",
+    "id": "qp_0004",
     "type": "choice",
     "chapter_id": "ch_indefinite_integral",
     "kp_ids": [
@@ -165,38 +72,7 @@
     "difficulty": "easy"
   },
   {
-    "id": "qp_0011",
-    "type": "choice",
-    "chapter_id": "ch_indefinite_integral",
-    "kp_ids": [
-      "kp_换元积分法"
-    ],
-    "stem": "$\\int \\sin 2x\\,dx$ 等于？",
-    "options": {
-      "A": "$\\cos 2x+C$",
-      "B": "$-\\frac{1}{2}\\cos 2x+C$",
-      "C": "$\\frac{1}{2}\\cos 2x+C$",
-      "D": "$-\\cos 2x+C$"
-    },
-    "answer": "B",
-    "explanation": "令 u=2x 换元。",
-    "difficulty": "medium"
-  },
-  {
-    "id": "qp_0012",
-    "type": "fill",
-    "chapter_id": "ch_indefinite_integral",
-    "kp_ids": [
-      "kp_换元积分法"
-    ],
-    "stem": "$\\int \\frac{1}{x\\ln x}\\,dx$ 的结果是？（填 ln|ln x|+C）",
-    "options": {},
-    "answer": "ln|ln x|+C",
-    "explanation": "令 u=ln x。",
-    "difficulty": "hard"
-  },
-  {
-    "id": "qp_0013",
+    "id": "qp_0005",
     "type": "choice",
     "chapter_id": "ch_indefinite_integral",
     "kp_ids": [
@@ -214,38 +90,7 @@
     "difficulty": "medium"
   },
   {
-    "id": "qp_0014",
-    "type": "choice",
-    "chapter_id": "ch_indefinite_integral",
-    "kp_ids": [
-      "kp_分部积分法"
-    ],
-    "stem": "$\\int \\ln x\\,dx$ 等于？",
-    "options": {
-      "A": "$x\\ln x-x+C$",
-      "B": "$\\frac{1}{x}+C$",
-      "C": "$x\\ln x+x+C$",
-      "D": "$\\ln x+C$"
-    },
-    "answer": "A",
-    "explanation": "u=ln x, dv=dx。",
-    "difficulty": "hard"
-  },
-  {
-    "id": "qp_0015",
-    "type": "fill",
-    "chapter_id": "ch_indefinite_integral",
-    "kp_ids": [
-      "kp_分部积分法"
-    ],
-    "stem": "$\\int x\\cos x\\,dx$ 的结果是？（填 x sin x+cos x+C）",
-    "options": {},
-    "answer": "x sin x+cos x+C",
-    "explanation": "u=x, dv=cos x dx。",
-    "difficulty": "medium"
-  },
-  {
-    "id": "qp_0016",
+    "id": "qp_0006",
     "type": "choice",
     "chapter_id": "ch_definite_integral",
     "kp_ids": [
@@ -263,38 +108,7 @@
     "difficulty": "easy"
   },
   {
-    "id": "qp_0017",
-    "type": "choice",
-    "chapter_id": "ch_definite_integral",
-    "kp_ids": [
-      "kp_定积分换元"
-    ],
-    "stem": "$\\int_0^{\\pi}\\sin x\\,dx$ 等于？",
-    "options": {
-      "A": "0",
-      "B": "1",
-      "C": "2",
-      "D": "π"
-    },
-    "answer": "C",
-    "explanation": "-cos x 在 0..π 上为 2。",
-    "difficulty": "easy"
-  },
-  {
-    "id": "qp_0018",
-    "type": "fill",
-    "chapter_id": "ch_definite_integral",
-    "kp_ids": [
-      "kp_定积分换元"
-    ],
-    "stem": "$\\int_1^e \\frac{1}{x}\\,dx$ 等于？（填数值）",
-    "options": {},
-    "answer": "1",
-    "explanation": "ln e - ln 1 = 1。",
-    "difficulty": "medium"
-  },
-  {
-    "id": "qp_0019",
+    "id": "qp_0007",
     "type": "choice",
     "chapter_id": "ch_multiple_integral",
     "kp_ids": [
@@ -312,38 +126,7 @@
     "difficulty": "hard"
   },
   {
-    "id": "qp_0020",
-    "type": "choice",
-    "chapter_id": "ch_multiple_integral",
-    "kp_ids": [
-      "kp_二重积分交换次序"
-    ],
-    "stem": "$\\int_0^1 dx\\int_0^x f\\,dy$ 交换次序后是？",
-    "options": {
-      "A": "$\\int_0^1 dy\\int_0^y f\\,dx$",
-      "B": "$\\int_0^1 dy\\int_y^1 f\\,dx$",
-      "C": "$\\int_0^1 dy\\int_0^1 f\\,dx$",
-      "D": "$\\int_0^1 dy\\int_1^y f\\,dx$"
-    },
-    "answer": "B",
-    "explanation": "区域 0≤y≤x≤1。",
-    "difficulty": "hard"
-  },
-  {
-    "id": "qp_0021",
-    "type": "fill",
-    "chapter_id": "ch_multiple_integral",
-    "kp_ids": [
-      "kp_二重积分交换次序"
-    ],
-    "stem": "矩形区域 $\\int_0^1 dx\\int_0^1 f\\,dy$ 交换次序后内层上下限是？（填 0 到 1）",
-    "options": {},
-    "answer": "0 到 1",
-    "explanation": "矩形区域上下限都是常数。",
-    "difficulty": "medium"
-  },
-  {
-    "id": "qp_0022",
+    "id": "qp_0008",
     "type": "choice",
     "chapter_id": "ch_ode_basic",
     "kp_ids": [
@@ -361,38 +144,7 @@
     "difficulty": "easy"
   },
   {
-    "id": "qp_0023",
-    "type": "choice",
-    "chapter_id": "ch_ode_basic",
-    "kp_ids": [
-      "kp_一阶线性微分方程"
-    ],
-    "stem": "$y'=2x$ 的通解是？",
-    "options": {
-      "A": "$y=x^2$",
-      "B": "$y=x^2+C$",
-      "C": "$y=2x+C$",
-      "D": "$y=x+C$"
-    },
-    "answer": "B",
-    "explanation": "两边积分并加常数。",
-    "difficulty": "easy"
-  },
-  {
-    "id": "qp_0024",
-    "type": "fill",
-    "chapter_id": "ch_ode_basic",
-    "kp_ids": [
-      "kp_一阶线性微分方程"
-    ],
-    "stem": "$y'+2y=0$ 的通解是？（填 y=Ce^{-2x}）",
-    "options": {},
-    "answer": "y=Ce^{-2x}",
-    "explanation": "特征根 r = -2。",
-    "difficulty": "medium"
-  },
-  {
-    "id": "qp_0025",
+    "id": "qp_0009",
     "type": "choice",
     "chapter_id": "ch_series",
     "kp_ids": [
@@ -410,38 +162,7 @@
     "difficulty": "medium"
   },
   {
-    "id": "qp_0026",
-    "type": "choice",
-    "chapter_id": "ch_series",
-    "kp_ids": [
-      "kp_幂级数收敛半径"
-    ],
-    "stem": "$\\sum \\frac{x^n}{n!}$ 的收敛半径是？",
-    "options": {
-      "A": "0",
-      "B": "1",
-      "C": "e",
-      "D": "∞"
-    },
-    "answer": "D",
-    "explanation": "后项比趋于 0，半径无穷。",
-    "difficulty": "medium"
-  },
-  {
-    "id": "qp_0027",
-    "type": "fill",
-    "chapter_id": "ch_series",
-    "kp_ids": [
-      "kp_幂级数收敛半径"
-    ],
-    "stem": "$\\sum n x^n$ 的收敛半径是？（填数值）",
-    "options": {},
-    "answer": "1",
-    "explanation": "|a_{n+1}/a_n| → 1。",
-    "difficulty": "easy"
-  },
-  {
-    "id": "qp_0028",
+    "id": "qp_0010",
     "type": "choice",
     "chapter_id": "ch_line_surface_integral",
     "kp_ids": [
@@ -459,7 +180,169 @@
     "difficulty": "medium"
   },
   {
-    "id": "qp_0029",
+    "id": "qp_0011",
+    "type": "choice",
+    "chapter_id": "ch_function_limit",
+    "kp_ids": [
+      "kp_等价无穷小替换"
+    ],
+    "stem": "求极限 $\\lim_{x\\to 0}\\frac{1-\\cos x}{x^2}$",
+    "options": {
+      "A": "0",
+      "B": "$\\frac{1}{2}$",
+      "C": "1",
+      "D": "2"
+    },
+    "answer": "B",
+    "explanation": "1-cos x ~ x²/2。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0012",
+    "type": "choice",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_洛必达法则"
+    ],
+    "stem": "求极限 $\\lim_{x\\to\\infty}\\frac{x^2}{e^x}$",
+    "options": {
+      "A": "0",
+      "B": "1",
+      "C": "2",
+      "D": "∞"
+    },
+    "answer": "A",
+    "explanation": "两次洛必达后分子为常数、分母仍指数增长。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0013",
+    "type": "choice",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_泰勒公式"
+    ],
+    "stem": "$e^x$ 的麦克劳林级数第二项系数是？",
+    "options": {
+      "A": "1",
+      "B": "$\\frac{1}{2}$",
+      "C": "$\\frac{1}{6}$",
+      "D": "0"
+    },
+    "answer": "B",
+    "explanation": "e^x = 1 + x + x²/2! + …。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0014",
+    "type": "choice",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_换元积分法"
+    ],
+    "stem": "$\\int \\sin 2x\\,dx$ 等于？",
+    "options": {
+      "A": "$\\cos 2x+C$",
+      "B": "$-\\frac{1}{2}\\cos 2x+C$",
+      "C": "$\\frac{1}{2}\\cos 2x+C$",
+      "D": "$-\\cos 2x+C$"
+    },
+    "answer": "B",
+    "explanation": "令 u=2x 换元。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0015",
+    "type": "choice",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_分部积分法"
+    ],
+    "stem": "$\\int \\ln x\\,dx$ 等于？",
+    "options": {
+      "A": "$x\\ln x-x+C$",
+      "B": "$\\frac{1}{x}+C$",
+      "C": "$x\\ln x+x+C$",
+      "D": "$\\ln x+C$"
+    },
+    "answer": "A",
+    "explanation": "u=ln x, dv=dx。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0016",
+    "type": "choice",
+    "chapter_id": "ch_definite_integral",
+    "kp_ids": [
+      "kp_定积分换元"
+    ],
+    "stem": "$\\int_0^{\\pi}\\sin x\\,dx$ 等于？",
+    "options": {
+      "A": "0",
+      "B": "1",
+      "C": "2",
+      "D": "π"
+    },
+    "answer": "C",
+    "explanation": "-cos x 在 0..π 上为 2。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0017",
+    "type": "choice",
+    "chapter_id": "ch_multiple_integral",
+    "kp_ids": [
+      "kp_二重积分交换次序"
+    ],
+    "stem": "$\\int_0^1 dx\\int_0^x f\\,dy$ 交换次序后是？",
+    "options": {
+      "A": "$\\int_0^1 dy\\int_0^y f\\,dx$",
+      "B": "$\\int_0^1 dy\\int_y^1 f\\,dx$",
+      "C": "$\\int_0^1 dy\\int_0^1 f\\,dx$",
+      "D": "$\\int_0^1 dy\\int_1^y f\\,dx$"
+    },
+    "answer": "B",
+    "explanation": "区域 0≤y≤x≤1。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0018",
+    "type": "choice",
+    "chapter_id": "ch_ode_basic",
+    "kp_ids": [
+      "kp_一阶线性微分方程"
+    ],
+    "stem": "$y'=2x$ 的通解是？",
+    "options": {
+      "A": "$y=x^2$",
+      "B": "$y=x^2+C$",
+      "C": "$y=2x+C$",
+      "D": "$y=x+C$"
+    },
+    "answer": "B",
+    "explanation": "两边积分并加常数。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0019",
+    "type": "choice",
+    "chapter_id": "ch_series",
+    "kp_ids": [
+      "kp_幂级数收敛半径"
+    ],
+    "stem": "$\\sum \\frac{x^n}{n!}$ 的收敛半径是？",
+    "options": {
+      "A": "0",
+      "B": "1",
+      "C": "e",
+      "D": "∞"
+    },
+    "answer": "D",
+    "explanation": "后项比趋于 0，半径无穷。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0020",
     "type": "choice",
     "chapter_id": "ch_line_surface_integral",
     "kp_ids": [
@@ -475,6 +358,123 @@
     "answer": "C",
     "explanation": "化为 ∬2 dxdy = 2π。",
     "difficulty": "hard"
+  },
+  {
+    "id": "qp_0021",
+    "type": "fill",
+    "chapter_id": "ch_function_limit",
+    "kp_ids": [
+      "kp_等价无穷小替换"
+    ],
+    "stem": "求极限 $\\lim_{x\\to 0}\\frac{\\tan 3x}{2x}$（填数值）",
+    "options": {},
+    "answer": "3/2",
+    "explanation": "tan3x ~ 3x，3x/2x = 3/2。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0022",
+    "type": "fill",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_洛必达法则"
+    ],
+    "stem": "求极限 $\\lim_{x\\to 0}\\frac{e^x-1}{x}$（填数值）",
+    "options": {},
+    "answer": "1",
+    "explanation": "0/0 型，洛必达得 e^x → 1。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0023",
+    "type": "fill",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_泰勒公式"
+    ],
+    "stem": "用泰勒公式求 $\\lim_{x\\to 0}\\frac{e^x-1-x}{x^2}$（填数值）",
+    "options": {},
+    "answer": "1/2",
+    "explanation": "分子 ~ x²/2，极限 1/2。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0024",
+    "type": "fill",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_换元积分法"
+    ],
+    "stem": "$\\int \\frac{1}{x\\ln x}\\,dx$ 的结果是？（填 ln|ln x|+C）",
+    "options": {},
+    "answer": "ln|ln x|+C",
+    "explanation": "令 u=ln x。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0025",
+    "type": "fill",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_分部积分法"
+    ],
+    "stem": "$\\int x\\cos x\\,dx$ 的结果是？（填 x sin x+cos x+C）",
+    "options": {},
+    "answer": "x sin x+cos x+C",
+    "explanation": "u=x, dv=cos x dx。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0026",
+    "type": "fill",
+    "chapter_id": "ch_definite_integral",
+    "kp_ids": [
+      "kp_定积分换元"
+    ],
+    "stem": "$\\int_1^e \\frac{1}{x}\\,dx$ 等于？（填数值）",
+    "options": {},
+    "answer": "1",
+    "explanation": "ln e - ln 1 = 1。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0027",
+    "type": "fill",
+    "chapter_id": "ch_multiple_integral",
+    "kp_ids": [
+      "kp_二重积分交换次序"
+    ],
+    "stem": "矩形区域 $\\int_0^1 dx\\int_0^1 f\\,dy$ 交换次序后内层上下限是？（填 0 到 1）",
+    "options": {},
+    "answer": "0 到 1",
+    "explanation": "矩形区域上下限都是常数。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0028",
+    "type": "fill",
+    "chapter_id": "ch_ode_basic",
+    "kp_ids": [
+      "kp_一阶线性微分方程"
+    ],
+    "stem": "$y'+2y=0$ 的通解是？（填 y=Ce^{-2x}）",
+    "options": {},
+    "answer": "y=Ce^{-2x}",
+    "explanation": "特征根 r = -2。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0029",
+    "type": "fill",
+    "chapter_id": "ch_series",
+    "kp_ids": [
+      "kp_幂级数收敛半径"
+    ],
+    "stem": "$\\sum n x^n$ 的收敛半径是？（填数值）",
+    "options": {},
+    "answer": "1",
+    "explanation": "|a_{n+1}/a_n| → 1。",
+    "difficulty": "easy"
   },
   {
     "id": "qp_0030",

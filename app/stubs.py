@@ -289,19 +289,19 @@ def answer(question: str, subject: str = "高等数学", style: str = "简洁", 
 
 
 def _stub_answer(question: str, subject: str, style: str) -> str:
-    """桩：返回四段结构 markdown，形状与 B 的提示词要求一致。"""
+    """示例回答：形状与真实提示词要求的四段结构一致，文案保持中性。"""
     detail = (
-        "详细版会在真实实现里展开推导过程，并多给一个反例。"
+        "详细版会展开推导过程，并多给一个反例。"
         if style == "详细"
         else "简洁版只给一个例子。"
     )
-    return f"""> 🧪 **桩函数输出**（`app/stubs.py`）—— B 的 `app/qa.py` 就绪后自动切真实现。
+    return f"""> 这是示例回答，用于演示页面效果。
 
 **【一句话定义】**
-你问的「{question}」属于{subject}的核心概念之一，这里先给出桩文本占位。
+你问的「{question}」属于{subject}的核心概念之一。
 
 **【通俗解释】**
-桩函数不做真实推理，只演示页面的渲染效果（markdown、公式、分点）。{detail}
+示例内容，用于演示排版效果（markdown、公式、分点）。{detail}
 
 **【具体例子】**
 例：求 $\\lim_{{x\\to 0}}\\frac{{\\sin 3x}}{{x}}$ —— 用等价无穷小 $\\sin 3x\\sim 3x$，结果为 3。
@@ -399,23 +399,23 @@ def analyze_image(image_bytes: bytes, extra_note: str = "") -> IntakeDraft:
     if real is not None:
         return real(image_bytes, extra_note=extra_note)
     draft = _stub_draft(
-        "（桩数据）求极限 $\\lim_{x\\to 0}\\frac{\\sin 3x}{x}$",
+        "求极限 $\\lim_{x\\to 0}\\frac{\\sin 3x}{x}$",
         "3",
         "3",
         source="image",
     )
-    draft.note = "桩函数没有真的识别图片，只演示流程" + (f"；用户备注：{extra_note}" if extra_note else "")
+    draft.note = "示例识别结果，请逐项核对后修改。" + (f"（备注：{extra_note}）" if extra_note else "")
     return draft
 
 
 def _stub_draft(q: str, s: str, c: str, source: str) -> IntakeDraft:
-    """桩草稿：字段齐全、confidence 0.82、给出一个「新建知识点」的建议。
+    """示例草稿：字段齐全、confidence 0.82、给出一个「新建知识点」的建议。
 
     刻意让 knowledge_ids 为空、new_concepts 有值：
-    这样第 8 步能演示「现有知识点都不合适 → 建议在章节下新建」那条路径。
+    演示「现有知识点都不合适 → 建议在章节下新建」那条路径。
     """
     return IntakeDraft(
-        question_text=(q or "").strip() or "（桩数据）求极限 lim(x→0) sin3x/x",
+        question_text=(q or "").strip() or "求极限 lim(x→0) sin3x/x",
         student_answer=(s or "").strip(),
         correct_answer=(c or "").strip() or "3",
         solution_steps=[
@@ -429,20 +429,21 @@ def _stub_draft(q: str, s: str, c: str, source: str) -> IntakeDraft:
         confidence=0.82,
         source=source,
         degraded=False,
-        note="桩函数输出，未经模型识别",
+        note="示例识别结果，请逐项核对后修改。",
     )
 
 
 def commit(draft, image_path: str | None = None) -> int:
     """用户确认后才落库的唯一入口。真实现归 B（app/intake.py）。
 
-    🔴 桩不写数据库，直接返回 0 —— 假装写成功会让「确认入库」变成假的，
-       第 8 步排查时根本分不清是真的存了还是桩糊弄过去了。
+    🔴 示例模式不写数据库，而且**必须报错**而不是返回 0。
+       返回 0 会让界面显示「已入库：错题 #0」，比不写更糟 ——
+       用户以为存进去了，实际什么都没有。
     """
     real = _real("app.intake", "commit")
     if real is not None:
         return real(draft, image_path=image_path)
-    return 0
+    raise ValueError("当前是示例模式，不会真的写入数据。")
 
 
 # ============================================================
@@ -453,7 +454,7 @@ def build_practice_session(count: int = 3):
     real = _real("app.profile", "build_practice_session")
     if real is not None:
         return real(count)
-    return _STUB_PRACTICE_ITEMS[: max(1, int(count))], "本次来自薄弱知识点（桩数据）"
+    return _STUB_PRACTICE_ITEMS[: max(1, int(count))], "本次来自薄弱知识点"
 
 
 def grade(item: dict, user_answer) -> bool:

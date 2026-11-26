@@ -109,16 +109,18 @@
 **若要补**：由 C₁ 在 `db.py` 里实现（一条 `GROUP BY error_type` 的聚合查询），
 C₂ 在 `profile.py` 里组装成 DataFrame，D 加一张图。属于锦上添花，不进必做清单。
 
-### 11. 成本统计要等 B 接上才有数字 ⚠️
+### 11. 重试失败的调用未计入成本统计 ⚠️
 
-`summary_text()` 返回的 `llm_calls` / `llm_tokens` 读的是 `llm_log` 表。
-写入口 `db.log_llm_call()` 已经就位，但**调用方是 B 的 `llm_client`**，
-它还没合并 —— 所以这两个数字目前恒为 0。
+`llm_log` 的读写都已接通：`llm_client` 每次成功调用后写 `db.log_llm_call()`，
+`summary_text()` 读它算出 `llm_calls` / `llm_tokens`。指标卡数字会随使用增长。
 
-**影响**：指标卡上的成本一栏显示 0，不影响其他功能。
+**残留偏差**：因校验失败而重试的那几次调用**没有记账**，所以成本会被略微低估。
+实测：一次失败 + 一次成功 = 发 2 次请求，`llm_log` 只 +1 条。
 
-**还款条件**：B 的 `llm_client` 合并时，要求它在每次 `chat()` / `vision()`
-返回后调一次 `db.log_llm_call(...)`。
+**影响**：只影响成本统计的精度，不影响任何功能判断。
+
+**还款条件**：`llm_client` 的重试循环里，每次 `_call_once` 返回后都记一条
+（成功 `success=True`、失败 `success=False`），最终放弃时也要落最后一条。
 
 ### 12. 测试覆盖不均 ⚠️
 

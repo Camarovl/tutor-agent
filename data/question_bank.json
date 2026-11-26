@@ -3,38 +3,490 @@
     "id": "qp_0001",
     "type": "choice",
     "chapter_id": "ch_function_limit",
-    "kp_ids": ["kp_等价无穷小替换"],
-    "stem": "求极限 $\\lim_{x\\to 0}\\dfrac{\\sin 3x}{x}$",
-    "options": { "A": "0", "B": "1", "C": "3", "D": "不存在" },
+    "kp_ids": [
+      "kp_等价无穷小替换"
+    ],
+    "stem": "求极限 $\\lim_{x\\to 0}\\frac{\\sin 5x}{x}$",
+    "options": {
+      "A": "0",
+      "B": "1",
+      "C": "5",
+      "D": "不存在"
+    },
     "answer": "C",
-    "explanation": "等价无穷小：当 x→0 时 sin 3x ~ 3x，故极限为 3。",
+    "explanation": "sin5x ~ 5x，极限为 5。",
     "difficulty": "easy"
   },
   {
     "id": "qp_0002",
-    "type": "fill",
-    "chapter_id": "ch_indefinite_integral",
-    "kp_ids": ["kp_不定积分换元"],
-    "stem": "计算不定积分 $\\int 2x\\,dx$（填空，含积分常数）",
-    "options": {},
-    "answer": "x^2+C",
-    "explanation": "∫2x dx = x² + C，不定积分不要漏掉任意常数 C。",
-    "difficulty": "easy"
+    "type": "choice",
+    "chapter_id": "ch_function_limit",
+    "kp_ids": [
+      "kp_等价无穷小替换"
+    ],
+    "stem": "求极限 $\\lim_{x\\to 0}\\frac{1-\\cos x}{x^2}$",
+    "options": {
+      "A": "0",
+      "B": "$\\frac{1}{2}$",
+      "C": "1",
+      "D": "2"
+    },
+    "answer": "B",
+    "explanation": "1-cos x ~ x²/2。",
+    "difficulty": "medium"
   },
   {
     "id": "qp_0003",
+    "type": "fill",
+    "chapter_id": "ch_function_limit",
+    "kp_ids": [
+      "kp_等价无穷小替换"
+    ],
+    "stem": "求极限 $\\lim_{x\\to 0}\\frac{\\tan 3x}{2x}$（填数值）",
+    "options": {},
+    "answer": "3/2",
+    "explanation": "tan3x ~ 3x，3x/2x = 3/2。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0004",
     "type": "choice",
-    "chapter_id": "ch_ode_basic",
-    "kp_ids": ["kp_一阶线性微分方程"],
-    "stem": "微分方程 $y' + y = 0$ 的通解是？",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_洛必达法则"
+    ],
+    "stem": "求极限 $\\lim_{x\\to 1}\\frac{\\ln x}{x-1}$",
     "options": {
-      "A": "$y = Ce^{-x}$",
-      "B": "$y = Ce^{x}$",
-      "C": "$y = Cx$",
-      "D": "$y = C$"
+      "A": "0",
+      "B": "1",
+      "C": "e",
+      "D": "不存在"
+    },
+    "answer": "B",
+    "explanation": "0/0 型，洛必达得 1/x ÷ 1 → 1。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0005",
+    "type": "choice",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_洛必达法则"
+    ],
+    "stem": "求极限 $\\lim_{x\\to\\infty}\\frac{x^2}{e^x}$",
+    "options": {
+      "A": "0",
+      "B": "1",
+      "C": "2",
+      "D": "∞"
     },
     "answer": "A",
-    "explanation": "一阶线性齐次方程，特征方程 r + 1 = 0，特征根 r = -1，故 y = Ce^{-x}。",
+    "explanation": "两次洛必达后分子为常数、分母仍指数增长。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0006",
+    "type": "fill",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_洛必达法则"
+    ],
+    "stem": "求极限 $\\lim_{x\\to 0}\\frac{e^x-1}{x}$（填数值）",
+    "options": {},
+    "answer": "1",
+    "explanation": "0/0 型，洛必达得 e^x → 1。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0007",
+    "type": "choice",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_泰勒公式"
+    ],
+    "stem": "$\\sin x$ 在 0 处展开到 $x^3$ 项是？",
+    "options": {
+      "A": "$x-\\frac{x^3}{6}$",
+      "B": "$x+\\frac{x^3}{6}$",
+      "C": "$1-\\frac{x^2}{2}$",
+      "D": "$x-\\frac{x^2}{2}$"
+    },
+    "answer": "A",
+    "explanation": "sin x = x - x³/3! + o(x³)。",
     "difficulty": "medium"
+  },
+  {
+    "id": "qp_0008",
+    "type": "choice",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_泰勒公式"
+    ],
+    "stem": "$e^x$ 的麦克劳林级数第二项系数是？",
+    "options": {
+      "A": "1",
+      "B": "$\\frac{1}{2}$",
+      "C": "$\\frac{1}{6}$",
+      "D": "0"
+    },
+    "answer": "B",
+    "explanation": "e^x = 1 + x + x²/2! + …。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0009",
+    "type": "fill",
+    "chapter_id": "ch_mean_value",
+    "kp_ids": [
+      "kp_泰勒公式"
+    ],
+    "stem": "用泰勒公式求 $\\lim_{x\\to 0}\\frac{e^x-1-x}{x^2}$（填数值）",
+    "options": {},
+    "answer": "1/2",
+    "explanation": "分子 ~ x²/2，极限 1/2。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0010",
+    "type": "choice",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_换元积分法"
+    ],
+    "stem": "$\\int 2x\\,dx$ 等于？",
+    "options": {
+      "A": "$x^2$",
+      "B": "$x^2+C$",
+      "C": "$2x^2+C$",
+      "D": "$\\frac{x^2}{2}+C$"
+    },
+    "answer": "B",
+    "explanation": "原函数 x²，不定积分带 C。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0011",
+    "type": "choice",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_换元积分法"
+    ],
+    "stem": "$\\int \\sin 2x\\,dx$ 等于？",
+    "options": {
+      "A": "$\\cos 2x+C$",
+      "B": "$-\\frac{1}{2}\\cos 2x+C$",
+      "C": "$\\frac{1}{2}\\cos 2x+C$",
+      "D": "$-\\cos 2x+C$"
+    },
+    "answer": "B",
+    "explanation": "令 u=2x 换元。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0012",
+    "type": "fill",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_换元积分法"
+    ],
+    "stem": "$\\int \\frac{1}{x\\ln x}\\,dx$ 的结果是？（填 ln|ln x|+C）",
+    "options": {},
+    "answer": "ln|ln x|+C",
+    "explanation": "令 u=ln x。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0013",
+    "type": "choice",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_分部积分法"
+    ],
+    "stem": "$\\int x e^x\\,dx$ 等于？",
+    "options": {
+      "A": "$xe^x+C$",
+      "B": "$(x-1)e^x+C$",
+      "C": "$(x+1)e^x+C$",
+      "D": "$\\frac{x^2}{2}e^x+C$"
+    },
+    "answer": "B",
+    "explanation": "u=x, dv=e^x dx。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0014",
+    "type": "choice",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_分部积分法"
+    ],
+    "stem": "$\\int \\ln x\\,dx$ 等于？",
+    "options": {
+      "A": "$x\\ln x-x+C$",
+      "B": "$\\frac{1}{x}+C$",
+      "C": "$x\\ln x+x+C$",
+      "D": "$\\ln x+C$"
+    },
+    "answer": "A",
+    "explanation": "u=ln x, dv=dx。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0015",
+    "type": "fill",
+    "chapter_id": "ch_indefinite_integral",
+    "kp_ids": [
+      "kp_分部积分法"
+    ],
+    "stem": "$\\int x\\cos x\\,dx$ 的结果是？（填 x sin x+cos x+C）",
+    "options": {},
+    "answer": "x sin x+cos x+C",
+    "explanation": "u=x, dv=cos x dx。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0016",
+    "type": "choice",
+    "chapter_id": "ch_definite_integral",
+    "kp_ids": [
+      "kp_定积分换元"
+    ],
+    "stem": "$\\int_0^1 2x\\,dx$ 等于？",
+    "options": {
+      "A": "0",
+      "B": "1",
+      "C": "2",
+      "D": "$\\frac{1}{2}$"
+    },
+    "answer": "B",
+    "explanation": "原函数 x²，代入得 1。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0017",
+    "type": "choice",
+    "chapter_id": "ch_definite_integral",
+    "kp_ids": [
+      "kp_定积分换元"
+    ],
+    "stem": "$\\int_0^{\\pi}\\sin x\\,dx$ 等于？",
+    "options": {
+      "A": "0",
+      "B": "1",
+      "C": "2",
+      "D": "π"
+    },
+    "answer": "C",
+    "explanation": "-cos x 在 0..π 上为 2。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0018",
+    "type": "fill",
+    "chapter_id": "ch_definite_integral",
+    "kp_ids": [
+      "kp_定积分换元"
+    ],
+    "stem": "$\\int_1^e \\frac{1}{x}\\,dx$ 等于？（填数值）",
+    "options": {},
+    "answer": "1",
+    "explanation": "ln e - ln 1 = 1。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0019",
+    "type": "choice",
+    "chapter_id": "ch_multiple_integral",
+    "kp_ids": [
+      "kp_二重积分交换次序"
+    ],
+    "stem": "$\\int_0^1 dx\\int_x^1 f\\,dy$ 交换次序后是？",
+    "options": {
+      "A": "$\\int_0^1 dy\\int_0^y f\\,dx$",
+      "B": "$\\int_0^1 dy\\int_y^1 f\\,dx$",
+      "C": "$\\int_0^1 dy\\int_0^1 f\\,dx$",
+      "D": "$\\int_1^0 dy\\int_0^y f\\,dx$"
+    },
+    "answer": "A",
+    "explanation": "区域 0≤x≤y≤1。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0020",
+    "type": "choice",
+    "chapter_id": "ch_multiple_integral",
+    "kp_ids": [
+      "kp_二重积分交换次序"
+    ],
+    "stem": "$\\int_0^1 dx\\int_0^x f\\,dy$ 交换次序后是？",
+    "options": {
+      "A": "$\\int_0^1 dy\\int_0^y f\\,dx$",
+      "B": "$\\int_0^1 dy\\int_y^1 f\\,dx$",
+      "C": "$\\int_0^1 dy\\int_0^1 f\\,dx$",
+      "D": "$\\int_0^1 dy\\int_1^y f\\,dx$"
+    },
+    "answer": "B",
+    "explanation": "区域 0≤y≤x≤1。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0021",
+    "type": "fill",
+    "chapter_id": "ch_multiple_integral",
+    "kp_ids": [
+      "kp_二重积分交换次序"
+    ],
+    "stem": "矩形区域 $\\int_0^1 dx\\int_0^1 f\\,dy$ 交换次序后内层上下限是？（填 0 到 1）",
+    "options": {},
+    "answer": "0 到 1",
+    "explanation": "矩形区域上下限都是常数。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0022",
+    "type": "choice",
+    "chapter_id": "ch_ode_basic",
+    "kp_ids": [
+      "kp_一阶线性微分方程"
+    ],
+    "stem": "$y'+y=0$ 的通解是？",
+    "options": {
+      "A": "$y=Ce^{-x}$",
+      "B": "$y=Ce^{x}$",
+      "C": "$y=Cx$",
+      "D": "$y=C$"
+    },
+    "answer": "A",
+    "explanation": "特征根 r = -1。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0023",
+    "type": "choice",
+    "chapter_id": "ch_ode_basic",
+    "kp_ids": [
+      "kp_一阶线性微分方程"
+    ],
+    "stem": "$y'=2x$ 的通解是？",
+    "options": {
+      "A": "$y=x^2$",
+      "B": "$y=x^2+C$",
+      "C": "$y=2x+C$",
+      "D": "$y=x+C$"
+    },
+    "answer": "B",
+    "explanation": "两边积分并加常数。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0024",
+    "type": "fill",
+    "chapter_id": "ch_ode_basic",
+    "kp_ids": [
+      "kp_一阶线性微分方程"
+    ],
+    "stem": "$y'+2y=0$ 的通解是？（填 y=Ce^{-2x}）",
+    "options": {},
+    "answer": "y=Ce^{-2x}",
+    "explanation": "特征根 r = -2。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0025",
+    "type": "choice",
+    "chapter_id": "ch_series",
+    "kp_ids": [
+      "kp_幂级数收敛半径"
+    ],
+    "stem": "$\\sum \\frac{x^n}{n}$ 的收敛半径是？",
+    "options": {
+      "A": "$\\frac{1}{2}$",
+      "B": "1",
+      "C": "2",
+      "D": "∞"
+    },
+    "answer": "B",
+    "explanation": "系数比趋于 1。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0026",
+    "type": "choice",
+    "chapter_id": "ch_series",
+    "kp_ids": [
+      "kp_幂级数收敛半径"
+    ],
+    "stem": "$\\sum \\frac{x^n}{n!}$ 的收敛半径是？",
+    "options": {
+      "A": "0",
+      "B": "1",
+      "C": "e",
+      "D": "∞"
+    },
+    "answer": "D",
+    "explanation": "后项比趋于 0，半径无穷。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0027",
+    "type": "fill",
+    "chapter_id": "ch_series",
+    "kp_ids": [
+      "kp_幂级数收敛半径"
+    ],
+    "stem": "$\\sum n x^n$ 的收敛半径是？（填数值）",
+    "options": {},
+    "answer": "1",
+    "explanation": "|a_{n+1}/a_n| → 1。",
+    "difficulty": "easy"
+  },
+  {
+    "id": "qp_0028",
+    "type": "choice",
+    "chapter_id": "ch_line_surface_integral",
+    "kp_ids": [
+      "kp_格林公式"
+    ],
+    "stem": "格林公式成立需要什么条件？",
+    "options": {
+      "A": "曲线任意",
+      "B": "闭曲线取正向且 P、Q 有连续偏导",
+      "C": "只要函数连续",
+      "D": "只对圆成立"
+    },
+    "answer": "B",
+    "explanation": "需要分段光滑正向闭曲线与连续偏导。",
+    "difficulty": "medium"
+  },
+  {
+    "id": "qp_0029",
+    "type": "choice",
+    "chapter_id": "ch_line_surface_integral",
+    "kp_ids": [
+      "kp_格林公式"
+    ],
+    "stem": "$\\oint_L x\\,dy-y\\,dx$（L 为正向单位圆）等于？",
+    "options": {
+      "A": "0",
+      "B": "$\\pi$",
+      "C": "$2\\pi$",
+      "D": "$4\\pi$"
+    },
+    "answer": "C",
+    "explanation": "化为 ∬2 dxdy = 2π。",
+    "difficulty": "hard"
+  },
+  {
+    "id": "qp_0030",
+    "type": "fill",
+    "chapter_id": "ch_line_surface_integral",
+    "kp_ids": [
+      "kp_格林公式"
+    ],
+    "stem": "$\\oint_L (x+y)dx+(x-y)dy$ 等于？（填数值）",
+    "options": {},
+    "answer": "0",
+    "explanation": "∂Q/∂x = 1，∂P/∂y = 1，差为 0。",
+    "difficulty": "hard"
   }
 ]

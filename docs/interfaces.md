@@ -217,6 +217,9 @@ confidence / source / degraded / note`
 | `grade(item, user_answer) -> bool` | 客观判分，规则见下方「题目结构与判分」 |
 | `record_result(items, answers) -> list[bool]` | 判分 + 回写 + 错题回流；返回每题是否答对。🔴 做错的题若带题目 id，走 `db.upsert_wrong_question_by_source()` **按题去重**；没有 id 的才走 `insert_wrong_question()` |
 
+> `build_practice_session()` 返回的「来源说明」是给用户看的，不含文件名、命令或内部进度术语；
+> 某条题目/某个 kp_id 被跳过的技术原因打到 stderr，不进入返回字符串。
+
 ### 🔴 `summary_text()` 返回（界面顶部指标卡，D 直接按这些键读）
 
 | 键 | 类型 | 含义 |

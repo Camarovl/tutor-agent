@@ -49,6 +49,7 @@ if hasattr(sys.stdout, "reconfigure"):
 import inspect
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 
@@ -1069,6 +1070,51 @@ def check_profile_flow(report: Report, chapters: list[dict] | None) -> None:
             problems.append(f"题目 {item.get('id')} 没有 kp_ids")
         elif not all(kp_id in existing for kp_id in kp_ids):
             problems.append(f"题目 {item.get('id')} 的 kp_ids 不在库里")
+
+    def _has_technical_terms(text: str) -> bool:
+        return any(
+            word in text for word in ("seed_data", "未接入", "待接", ".py")
+        ) or bool(re.search(r"第\s*\d+\s*步", text))
+
+    if note and _has_technical_terms(note):
+        problems.append(f"出题来源说明含技术词：{note!r}")
+
+    # 来源说明的两种边界：题库为空、题库不足；说明里不能出现技术词
+    real_bank: list[dict] = []
+    try:
+        loaded = json.loads(
+            (DATA_DIR / "question_bank.json").read_text(encoding="utf-8")
+        )
+        if isinstance(loaded, list):
+            real_bank = loaded
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    if not real_bank:
+        problems.append("题库为空，无法测试“题库不足”的来源说明")
+    else:
+        from unittest.mock import patch
+
+        with patch.object(profile.json, "loads", return_value=[]):
+            empty_items, empty_note = profile.build_practice_session(3)
+        if empty_items:
+            problems.append("题库为空时不应返回题目")
+        if (
+            "题库暂时没有可用的题目" not in empty_note
+            or _has_technical_terms(empty_note)
+        ):
+            problems.append(f"空题库的来源说明不对：{empty_note!r}")
+
+        with patch.object(profile.json, "loads", return_value=[real_bank[0]]):
+            few_items, few_note = profile.build_practice_session(3)
+        if len(few_items) != 1:
+            problems.append(f"题库只有 1 题时应返回 1 题，实际 {len(few_items)} 题")
+        if (
+            "本次生成了 1 道" not in few_note
+            or "题库暂时只有这些" not in few_note
+            or _has_technical_terms(few_note)
+        ):
+            problems.append(f"题库不足的来源说明不对：{few_note!r}")
 
     # grade：纯函数、大小写/空格宽容、未知题型 False
     grade_cases = [

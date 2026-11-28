@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import sys
 
 from app import knowledge, llm_client, prompts
 
@@ -180,7 +181,13 @@ def answer(
     result = llm_client.chat(messages, purpose="qa")
     reply = (result.text or "").strip()
     if not reply:
-        raise llm_client.LLMError("模型返回了空回答（可能是 token 全部用于内部推理）")
+        # 技术细节进 stderr，异常 message 只给用户看
+        print(
+            f"[qa] 模型返回空回答（completion_tokens={result.completion_tokens}, "
+            f"reasoning_tokens={result.reasoning_tokens}）",
+            file=sys.stderr,
+        )
+        raise llm_client.LLMError("模型这次没有给出内容，请重试或换个问法")
     return reply
 
 

@@ -626,8 +626,9 @@ def _recent_intake() -> None:
     # 逐行渲染而不是 st.dataframe：表格里放不了按钮，而删错题必须每行一个入口。
     for row in rows:
         wq_id = row.get("id")
-        # 🔴 表格/文本不跑 KaTeX，直接显示 LaTeX 源码很难读 —— 只做展示降级，不动数据
-        stem = ui_theme.plain_math(row.get("question_text"))[:60]
+        # 逐行用 markdown 渲染，KaTeX 能正常显示公式，直接用原始题干（不降级、不截断）。
+        # 截断会把 $...$ 从中间切断，渲染必然失败。
+        stem = (row.get("question_text") or "").strip()
         names = "、".join(k["name"] for k in row.get("knowledge_points", [])) or "—"
         error_label = backend.ERROR_TYPE_LABELS.get(row.get("error_type"), row.get("error_type") or "—")
         info_col, action_col = st.columns([0.82, 0.18], vertical_alignment="center")

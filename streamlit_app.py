@@ -623,20 +623,45 @@ def _recent_intake() -> None:
     if not rows:
         st.caption("还没有录入过错题。")
         return
-    table = pd.DataFrame(
-        [
-            {
-                "编号": row.get("id"),
-                # 🔴 表格不跑 KaTeX，直接显示 LaTeX 源码很难读 —— 只做展示降级，不动数据
-                "题干": ui_theme.plain_math(row.get("question_text"))[:60],
-                "知识点": "、".join(k["name"] for k in row.get("knowledge_points", [])) or "—",
-                "错因": backend.ERROR_TYPE_LABELS.get(row.get("error_type"), row.get("error_type") or "—"),
-                "时间": row.get("created_at"),
-            }
-            for row in rows
-        ]
-    )
-    st.dataframe(table, hide_index=True)
+    # 逐行渲染而不是 st.dataframe：表格里放不了按钮，而删错题必须每行一个入口。
+    for row in rows:
+        wq_id = row.get("id")
+        # 🔴 表格/文本不跑 KaTeX，直接显示 LaTeX 源码很难读 —— 只做展示降级，不动数据
+        stem = ui_theme.plain_math(row.get("question_text"))[:60]
+        names = "、".join(k["name"] for k in row.get("knowledge_points", [])) or "—"
+        error_label = backend.ERROR_TYPE_LABELS.get(row.get("error_type"), row.get("error_type") or "—")
+        info_col, action_col = st.columns([0.82, 0.18], vertical_alignment="center")
+        with info_col:
+            st.markdown(f"**#{wq_id}**　{stem}")
+            st.caption(f"{names} · {error_label} · {row.get('created_at')}")
+        with action_col:
+            if st.button("删除", key=f"del_{wq_id}"):
+                st.session_state["pending_delete"] = wq_id
+
+    pending = st.session_state.get("pending_delete")
+    if pending is not None:
+        st.warning(f"确认删除错题 #{pending}？删除后不可恢复，知识点本身不受影响。")
+        confirmed = st.checkbox("确认删除", key=f"confirm_delete_{pending}")
+        col_yes, col_no = st.columns(2)
+        if confirmed and col_yes.button("确认删除该题", type="primary", key=f"do_delete_{pending}"):
+            try:
+                deleted = backend.delete_wrong_question(int(pending))
+            except Exception as exc:  # noqa: BLE001 —— 删库失败不该把页面打挂
+                st.error("删除没成功，请稍后重试。" + (f"（{exc}）" if _DEBUG else ""))
+            else:
+                if deleted:
+                    st.session_state["pending_delete"] = None
+                    st.toast("已删除", icon="🗑")
+                    st.rerun()
+                else:
+                    if backend.sources().get("delete_wrong_question") != "real":
+                        # 门面还没接上真实现（C₁ 正在补 db.delete_wrong_question）
+                        st.info("当前是示例模式，不会真的删除数据。")
+                    else:
+                        st.error("删除没成功：这道题可能已经被删掉了，刷新页面再看。")
+        if col_no.button("取消", key=f"cancel_delete_{pending}"):
+            st.session_state["pending_delete"] = None
+            st.rerun()
 
 
 # ============================================================

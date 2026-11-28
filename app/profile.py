@@ -24,7 +24,10 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
+import unicodedata
+from fractions import Fraction
 from pathlib import Path
 
 import pandas as pd
@@ -105,7 +108,9 @@ def summary_text() -> dict:
     }
 
 
-def build_practice_session(count: int = 3) -> tuple[list[dict], str]:
+def build_practice_session(
+    count: int = 3, exclude_ids: list[str] | None = None
+) -> tuple[list[dict], str]:
     """按薄弱知识点从本地题库选一组题（不调用模型）。
 
     返回的第二个值是给用户看的「来源说明」：只描述题目从哪来，不含文件名、
@@ -114,11 +119,14 @@ def build_practice_session(count: int = 3) -> tuple[list[dict], str]:
     选池规则：
       1. 只保留 kp_ids 都能在数据库里找到的题，避免练完写 practice_log 时外键失败；
       2. 按「命中薄弱知识点的个数」降序，同分按题目 id 稳定排序；
-      3. 题库不够 count 题就返回现有的，并说明「题库暂时只有这些」。
+      3. `exclude_ids` 里的题（通常是上一轮刚做过的）排到最后，新题优先；
+         新题不够时用旧题补足，并在来源说明里写清楚；
+      4. 题库不够 count 题就返回现有的，并说明「题库暂时只有这些」。
     """
     count = int(count)
     if count <= 0:
         return [], "题目数量必须大于 0"
+    seen_ids = {str(item) for item in (exclude_ids or []) if item}
 
     bank_path = Path(__file__).resolve().parent.parent / "data" / "question_bank.json"
     try:
@@ -167,10 +175,23 @@ def build_practice_session(count: int = 3) -> tuple[list[dict], str]:
         return sum(1 for kp_id in item["kp_ids"] if kp_id in weak_ids)
 
     ranked = sorted(valid, key=lambda item: (-weak_hits(item), str(item["id"])))
-    chosen = [dict(item) for item in ranked[:count]]
+    fresh = [item for item in ranked if str(item["id"]) not in seen_ids]
+    reused = [item for item in ranked if str(item["id"]) in seen_ids]
+
+    chosen = [dict(item) for item in fresh[:count]]
+    reused_count = 0
+    if len(chosen) < count and reused:
+        need = count - len(chosen)
+        chosen += [dict(item) for item in reused[:need]]
+        reused_count = min(need, len(reused))
 
     if len(chosen) < count:
         note = f"本次生成了 {len(chosen)} 道（题库暂时只有这些）"
+    elif reused_count:
+        note = (
+            f"本次生成了 {len(chosen)} 道"
+            f"（题库里的新题已经练完，其中 {reused_count} 道是上次做过的）"
+        )
     elif any(weak_hits(item) > 0 for item in chosen):
         note = "本次来自薄弱知识点"
     else:
@@ -178,11 +199,66 @@ def build_practice_session(count: int = 3) -> tuple[list[dict], str]:
     return chosen, note
 
 
+_SUPERSCRIPT_DIGITS = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
+
+
+def _normalize_answer(value) -> str:
+    """把学生答案归一成可比较的形式（只用于判分，不改数据）。
+
+    · 全角转半角（NFKC），去掉所有空白
+    · π/pi、×/*、÷//、各种减号统一
+    · 上标数字转 ^：x² → x^2（学生常直接打上标）
+    """
+    # 上标必须在 NFKC 之前处理：NFKC 会把 ² 直接压成 2，就分不出是幂次了
+    raw_text = re.sub(
+        r"[⁰¹²³⁴⁵⁶⁷⁸⁹]+",
+        lambda m: "^" + m.group(0).translate(_SUPERSCRIPT_DIGITS),
+        str(value or ""),
+    )
+    text = unicodedata.normalize("NFKC", raw_text)
+    text = (
+        text.replace("π", "pi")
+        .replace("×", "*")
+        .replace("÷", "/")
+        .replace("−", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+    )
+    return re.sub(r"\s+", "", text).lower()
+
+
+def _as_fraction(value: str) -> Fraction | None:
+    """纯数字答案转分数：'3/2'、'1.5'、'6/4' 都能落到同一个值。"""
+    text = _normalize_answer(value)
+    if not text or not re.fullmatch(r"[+-]?(\d+(\.\d*)?|\.\d+)(/\d+)?", text):
+        return None
+    try:
+        return Fraction(text)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def _normalize_interval(value: str) -> str | None:
+    """区间类答案归一：'0 到 1' / '[0,1]' / '(0,1)' / '0~1' 都看成同一个区间。"""
+    text = _normalize_answer(value)
+    if not text:
+        return None
+    if not re.search(r"[\[\](){}]|,|到|~", text):
+        return None
+    text = re.sub(r"[\[\](){}]", "", text)
+    text = text.replace("到", ",").replace("~", ",")
+    if "," not in text:
+        return None
+    return ",".join(part for part in text.split(",") if part)
+
+
 def grade(item: dict, user_answer) -> bool:
-    """客观判分（纯函数，不读库、不联网）。
+    """客观判分（纯函数、确定性，不读库、不联网）。
 
     choice：忽略大小写与首尾空格；
-    fill  ：去掉所有空白后比较（不承诺 1/2 与 0.5 这类等价写法）；
+    fill  ：先做字符串归一，再依次尝试「数值等价」「区间等价」——
+            '3/2' 与 '1.5'、'6/4' 视为相同；'0 到 1' 与 '[0,1]' 视为相同；
+            'π/2' 与 'pi/2' 视为相同（π 归一成 pi）；
     未知题型：False。
     """
     if not isinstance(item, dict):
@@ -196,10 +272,15 @@ def grade(item: dict, user_answer) -> bool:
     if kind == "choice":
         return got.upper() == expected.upper()
     if kind == "fill":
-        def normalize(value: str) -> str:
-            return "".join(value.split()).lower()
-
-        return normalize(got) == normalize(expected)
+        if _normalize_answer(got) == _normalize_answer(expected):
+            return True
+        left, right = _as_fraction(expected), _as_fraction(got)
+        if left is not None and right is not None and left == right:
+            return True
+        left_iv, right_iv = _normalize_interval(expected), _normalize_interval(got)
+        if left_iv is not None and right_iv is not None and left_iv == right_iv:
+            return True
+        return False
     return False
 
 

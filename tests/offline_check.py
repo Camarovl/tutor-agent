@@ -1116,6 +1116,26 @@ def check_profile_flow(report: Report, chapters: list[dict] | None) -> None:
         ):
             problems.append(f"题库不足的来源说明不对：{few_note!r}")
 
+        # 出题轮转：传上一轮 id 应换一批题；全排除时应回落旧题并注明
+        prev_ids = [item.get("id") for item in items]
+        next_items, next_note = profile.build_practice_session(3, exclude_ids=prev_ids)
+        overlap = {item.get("id") for item in next_items} & set(prev_ids)
+        if overlap:
+            problems.append(f"exclude_ids 未生效，仍出现上一轮的题：{sorted(overlap)}")
+        if len(next_items) != len(items):
+            problems.append(
+                f"exclude_ids 场景应出 {len(items)} 题，实际 {len(next_items)} 题"
+            )
+        if _has_technical_terms(next_note):
+            problems.append(f"轮转后的来源说明含技术词：{next_note!r}")
+
+        all_ids = [item.get("id") for item in real_bank if item.get("id")]
+        reuse_items, reuse_note = profile.build_practice_session(3, exclude_ids=all_ids)
+        if not reuse_items:
+            problems.append("全部题目都被 exclude 时应回落旧题，实际一道都没出")
+        elif "上次做过" not in reuse_note:
+            problems.append(f"回落旧题时来源说明应注明重复：{reuse_note!r}")
+
     # grade：纯函数、大小写/空格宽容、未知题型 False
     grade_cases = [
         ("选择题小写", {"type": "choice", "answer": "B"}, "b", True),
@@ -1125,6 +1145,13 @@ def check_profile_flow(report: Report, chapters: list[dict] | None) -> None:
         ("填空题错答", {"type": "fill", "answer": "3"}, "4", False),
         ("未知题型", {"type": "judge", "answer": "A"}, "A", False),
         ("答案为空", {"type": "fill", "answer": ""}, "", False),
+        # 等价写法：学生实际会怎么打字（判错成本比判对高，必须宽容）
+        ("小数等价", {"type": "fill", "answer": "3/2"}, "1.5", True),
+        ("等值分数", {"type": "fill", "answer": "3/2"}, "6/4", True),
+        ("π 写成 pi", {"type": "fill", "answer": "π/2"}, "pi/2", True),
+        ("上标写法", {"type": "fill", "answer": "x^2+C"}, "x²+C", True),
+        ("区间写法", {"type": "fill", "answer": "0 到 1"}, "[0,1]", True),
+        ("数值不等价仍判错", {"type": "fill", "answer": "3/2"}, "2", False),
     ]
     for label, item, answer, expected in grade_cases:
         got = profile.grade(item, answer)
@@ -1196,7 +1223,7 @@ def check_profile_flow(report: Report, chapters: list[dict] | None) -> None:
         report.fail(f"指标卡/出题/判分/回写：{len(problems)} 处不符合预期", "\n".join(problems[:8]))
     else:
         report.ok(
-            "指标卡/出题/判分/回写：6 键、题库 3 题、7 个判分用例、"
+            "指标卡/出题/判分/回写：6 键、题库选池与轮转、判分等价、"
             "2 条练习记录 + 1 道错题回流全部正确"
         )
 

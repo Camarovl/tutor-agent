@@ -237,8 +237,8 @@ confidence / source / degraded / note`
 | `mastery_table() -> DataFrame` | 🔴 **只做组装**：调 `db.mastery_rows()` 拿 11 列，转 DataFrame 并做类型转换/四舍五入。系数与四档分级已在 SQL 里算好，**不要在这里重算**（见第一节分工说明） |
 | `weak_points(n) -> list[dict]` | 排除「样本不足」后，按掌握度升序取前 n 个。排序三级键见下方 |
 | `summary_text() -> dict` | 界面顶部指标卡数据，键名见下方「summary_text 返回」 |
-| `build_practice_session(count) -> (list[dict], str)` | 返回题目列表 + 来源说明（如「本次来自薄弱知识点」） |
-| `grade(item, user_answer) -> bool` | 客观判分，规则见下方「题目结构与判分」 |
+| `build_practice_session(count, exclude_ids=None) -> (list[dict], str)` | 返回题目列表 + 来源说明（如「本次来自薄弱知识点」）。`exclude_ids` 传上一轮做过的题目 id，选池时会优先给没做过的新题；新题不够时用旧题补足，并在来源说明里注明「其中 N 道是上次做过的」 |
+| `grade(item, user_answer) -> bool` | 客观判分（纯函数、确定性）。`fill` 先做字符串归一（全角/空白/大小写/上标 π），再尝试数值等价与区间等价，规则见下方「题目结构与判分」 |
 | `record_result(items, answers) -> list[bool]` | 判分 + 回写 + 错题回流；返回每题是否答对。🔴 做错的题若带题目 id，走 `db.upsert_wrong_question_by_source()` **按题去重**；没有 id 的才走 `insert_wrong_question()` |
 
 > `build_practice_session()` 返回的「来源说明」是给用户看的，不含文件名、命令或内部进度术语；
@@ -256,6 +256,22 @@ confidence / source / degraded / note`
 | `llm_tokens` | int | 累计 token 用量 |
 
 键名固定，增删键要同步本文件 —— D 的界面直接按下标读这几个键。
+
+### 判分规则（`grade`，学生输入的实际写法要能判对）
+
+| 题型 | 规则 |
+|---|---|
+| `choice` | 忽略大小写与首尾空格，`"c"` == `"C"` |
+| `fill` | 先归一：全角转半角、去空白、转小写、`π`→`pi`、上标数字→`^N`（`x²`→`x^2`） |
+
+归一之后依次尝试三种等价，命中任一即判对：
+
+1. **字符串相同**：`"ln|ln x|+C"` 与 `"ln|lnx|+c"`
+2. **数值等价**：`"3/2"` == `"1.5"` == `"6/4"`（按分数比较，不做浮点近似）
+3. **区间等价**：`"0 到 1"` == `"[0,1]"` == `"(0,1)"` == `"0~1"`
+
+🔴 不做的事：不解析表达式、不做符号化简（`"x+x"` 不等于 `"2x"`），也不做单位换算。
+这些要么需要 CAS 依赖，要么判错代价比判对高；题库的标准答案写成易输入的形式即可。
 
 ### 🔴 题目结构（`build_practice_session` 产出 / `question_bank.json` 存储 / `grade` 消费）
 

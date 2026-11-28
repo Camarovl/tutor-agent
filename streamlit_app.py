@@ -626,9 +626,9 @@ def _recent_intake() -> None:
     # 逐行渲染而不是 st.dataframe：表格里放不了按钮，而删错题必须每行一个入口。
     for row in rows:
         wq_id = row.get("id")
-        # 逐行用 markdown 渲染，KaTeX 能正常显示公式，直接用原始题干（不降级、不截断）。
-        # 截断会把 $...$ 从中间切断，渲染必然失败。
-        stem = (row.get("question_text") or "").strip()
+        # 逐行用 markdown 渲染，KaTeX 能正常显示公式，直接用原始题干。
+        # 过长的才截断，而且只在 $...$ 外面下刀（见 ui_theme.clip_math）。
+        stem = ui_theme.clip_math(row.get("question_text"), 160)
         names = "、".join(k["name"] for k in row.get("knowledge_points", [])) or "—"
         error_label = backend.ERROR_TYPE_LABELS.get(row.get("error_type"), row.get("error_type") or "—")
         info_col, action_col = st.columns([0.82, 0.18], vertical_alignment="center")
@@ -802,8 +802,11 @@ def _tab_practice() -> None:
     st.caption("按薄弱知识点出题；做错的题会自动回流错题本")
 
     if st.button("生成一组练习", type="primary"):
+        # 上一轮做过的题传给选池，优先出新题 —— 否则连点两次拿到的是同一批，
+        # 用户会以为按钮坏了。（选池对新题不够时会用旧题补足并说明）
+        seen_ids = list(st.session_state.get("practice_seen_ids") or [])
         try:
-            items, note = backend.build_practice_session(3)
+            items, note = backend.build_practice_session(3, exclude_ids=seen_ids)
         except Exception as exc:  # noqa: BLE001
             st.error("出题失败，请稍后重试。" + (f"（{exc}）" if _DEBUG else ""))
             return
@@ -811,6 +814,10 @@ def _tab_practice() -> None:
         st.session_state.practice_note = note
         st.session_state.practice_result = None
         st.session_state.practice_graded = None  # 新一轮，重新允许提交
+        # 记住最近几轮出过的题（滚动保留 3 轮），下次出题时排在最末
+        st.session_state.practice_seen_ids = (
+            seen_ids + [item.get("id") for item in items]
+        )[-12:]
         st.toast(f"已生成 {len(items)} 道题", icon="📐")
 
     items = st.session_state.practice_items

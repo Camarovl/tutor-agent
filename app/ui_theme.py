@@ -27,6 +27,8 @@ Streamlit 只开放四个主题色，border/阴影/硬投影/网格底/标签页
 
 from __future__ import annotations
 
+import re
+
 import streamlit as st
 
 # ============================================================
@@ -428,6 +430,181 @@ input::placeholder, textarea::placeholder{ color:#8C8477 !important; }
 }
 
 """
+
+
+# ============================================================
+# LaTeX → 纯文本（只做展示降级，不动数据）
+# ============================================================
+_SYMBOLS = [
+    (r"\displaystyle", ""),
+    (r"\left", ""),
+    (r"\right", ""),
+    (r"\quad", " "),
+    (r"\qquad", " "),
+    (r"\,", " "),
+    (r"\;", " "),
+    (r"\!", ""),
+    (r"\cdot", "·"),
+    (r"\times", "×"),
+    (r"\div", "÷"),
+    (r"\pm", "±"),
+    (r"\leq", "≤"),
+    (r"\le", "≤"),
+    (r"\geq", "≥"),
+    (r"\ge", "≥"),
+    (r"\neq", "≠"),
+    (r"\ne", "≠"),
+    (r"\approx", "≈"),
+    (r"\infty", "∞"),
+    (r"\to", "→"),
+    (r"\rightarrow", "→"),
+    (r"\pi", "π"),
+    (r"\alpha", "α"),
+    (r"\beta", "β"),
+    (r"\theta", "θ"),
+    (r"\lambda", "λ"),
+    (r"\mu", "μ"),
+    (r"\sigma", "σ"),
+    (r"\partial", "∂"),
+    (r"\int", "∫"),
+    (r"\iint", "∬"),
+    (r"\sum", "Σ"),
+    (r"\prod", "∏"),
+    (r"\arcsin", "arcsin"),
+    (r"\arccos", "arccos"),
+    (r"\arctan", "arctan"),
+    (r"\sinh", "sinh"),
+    (r"\cosh", "cosh"),
+    (r"\sin", "sin"),
+    (r"\cos", "cos"),
+    (r"\tan", "tan"),
+    (r"\cot", "cot"),
+    (r"\sec", "sec"),
+    (r"\csc", "csc"),
+    (r"\ln", "ln"),
+    (r"\log", "log"),
+    (r"\exp", "exp"),
+    (r"\max", "max"),
+    (r"\min", "min"),
+    (r"\lim", "lim"),
+]
+
+
+def _take_group(text: str, start: int) -> tuple[str, int]:
+    """从 text[start] == '{' 开始取配平的整组内容，返回 (内容, 右括号之后的位置)。"""
+    depth = 0
+    for index in range(start, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1 : index], index + 1
+    return text[start + 1 :], len(text)
+
+
+def _skip_spaces(text: str, index: int) -> int:
+    while index < len(text) and text[index] in " \t":
+        index += 1
+    return index
+
+
+def _replace_two_arg(text: str, command: str, render) -> str:
+    r"""把 \frac{a}{b} 这类「命令 + 两组参数」按 render(a, b) 逐层替换（支持嵌套）。"""
+    out: list[str] = []
+    cursor = 0
+    while True:
+        hit = text.find(command, cursor)
+        if hit == -1:
+            out.append(text[cursor:])
+            break
+        out.append(text[cursor:hit])
+        pos = _skip_spaces(text, hit + len(command))
+        if pos < len(text) and text[pos] == "{":
+            first, pos = _take_group(text, pos)
+            pos = _skip_spaces(text, pos)
+            if pos < len(text) and text[pos] == "{":
+                second, pos = _take_group(text, pos)
+                out.append(render(first, second))
+                cursor = pos
+                continue
+        out.append(command)
+        cursor = hit + len(command)
+    return "".join(out)
+
+
+def _replace_one_arg(text: str, command: str, render) -> str:
+    r"""把 \sqrt{x} 这类单参数命令按 render(x) 替换（支持嵌套）。"""
+    out: list[str] = []
+    cursor = 0
+    while True:
+        hit = text.find(command, cursor)
+        if hit == -1:
+            out.append(text[cursor:])
+            break
+        out.append(text[cursor:hit])
+        pos = _skip_spaces(text, hit + len(command))
+        if pos < len(text) and text[pos] == "{":
+            inner, pos = _take_group(text, pos)
+            out.append(render(inner))
+            cursor = pos
+            continue
+        out.append(command)
+        cursor = hit + len(command)
+    return "".join(out)
+
+
+def plain_math(text: str) -> str:
+    r"""把 LaTeX 片段降级成纯文本，只用于表格等不渲染公式的位置。
+
+    🔴 只做展示降级，不动数据：数据库里的 question_text 仍然是 LaTeX，
+       需要精确排版时继续用 st.latex / st.markdown。
+
+    转换顺序有依赖：`\lim_{x\to 0}` 必须**先整体识别**成 lim(x→0)，
+    否则下标会先被换成 lim_(x→0)，极限规则就再也匹配不上了。
+    """
+    s = str(text or "").replace("$$", "").replace("$", "")
+
+    # ① 极限整体：\lim_{x\to 0} → lim(x→0)
+    def _lim(match: "re.Match[str]") -> str:
+        inner = match.group(1).replace(r"\to", "→")
+        inner = re.sub(r"\s*→\s*", "→", inner).strip()
+        return f"lim({inner})"
+
+    s = re.sub(r"\\lim_\{([^{}]*)\}", _lim, s)
+
+    # ② 分式：\frac{a}{b} → (a)/(b)，循环到没有为止（照顾嵌套）
+    for _ in range(6):
+        before = s
+        s = _replace_two_arg(s, r"\dfrac", lambda a, b: f"({a})/({b})")
+        s = _replace_two_arg(s, r"\frac", lambda a, b: f"({a})/({b})")
+        if s == before:
+            break
+
+    # ③ 根号：\sqrt{x} → √(x)
+    for _ in range(6):
+        before = s
+        s = _replace_one_arg(s, r"\sqrt", lambda a: f"√({a})")
+        if s == before:
+            break
+
+    # ④ \text{...} / \mathrm{...} 只留里面的字
+    s = _replace_one_arg(s, r"\text", lambda a: a)
+    s = _replace_one_arg(s, r"\mathrm", lambda a: a)
+
+    # ⑤ 常用符号
+    for token, replacement in _SYMBOLS:
+        s = s.replace(token, replacement)
+
+    # ⑥ 上下标：x^{2} → x^2；x_{n} → x_n
+    s = re.sub(r"\^\{([^{}]*)\}", r"^\1", s)
+    s = re.sub(r"_\{([^{}]*)\}", r"_\1", s)
+
+    # ⑦ 收尾：去掉剩下的反斜杠与花括号，压缩空白
+    s = s.replace("\\", "").replace("{", "").replace("}", "")
+    s = re.sub(r"[ \t]+", " ", s)
+    return s.strip()
 
 
 def inject() -> None:

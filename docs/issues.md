@@ -272,53 +272,52 @@ if str(it["answer"]).strip().upper() not in keys:
 
 **原因**
 
-`streamlit_app.py` 的 `_recent_intake()` 用 `st.dataframe` 渲染表格，
-而 **`st.dataframe` 只认纯文本，不跑 KaTeX（LaTeX 渲染引擎）**。
-另一边 `st.latex` 虽然能渲染，但塞进表格格子会把布局撑破，两者不能混用。
+第一版用 `st.dataframe` 渲染「最近录入」表格，而 `st.dataframe` 只认纯文本、
+不跑 KaTeX，所以题干里的 `$...$` 原样显示。
 
-同一份数据在不同控件里的表现不一致：
+后来为了给每行加「删除」按钮，表格改成了逐行 `st.markdown` —— markdown 本来能渲染公式，
+但当时那层 `plain_math()` 展示降级（还带截断 60 字）没跟着去掉，于是出现另一种显示问题：
+
+```
+$\oint_L (x+y)\,dx+(x-y)\,dy$   ->   oint_L (x+y) dx+(x-y) dy
+```
+
+`plain_math()` 的符号表里没有 `\oint`，未知命令走「去掉反斜杠」的兜底，积分符号就被吃掉了。
+
+**控件能不能渲染 LaTeX**
 
 | 控件 | 能否渲染 LaTeX |
 |---|---|
-| `st.markdown` / `st.latex` / `st.chat_message` | ✅ 能 |
-| `st.dataframe` / `st.caption` / `st.text_area` / `st.text_input` | ❌ 不能，原样输出源码 |
+| `st.markdown` / `st.latex` / `st.chat_message` / `st.caption` | ✅ 能（都走 StreamlitMarkdown + KaTeX） |
+| `st.radio` 等控件的选项文字 | ✅ 能（选项文字同样走 StreamlitMarkdown） |
+| `st.dataframe` / `st.table` | ❌ 不能，纯文本 |
+| `st.text_area` / `st.text_input` | 不适用（可编辑输入框，本来就该显示源码） |
 
-这是「数据本身没问题、换个控件就露馅」的典型：数据库里存的 LaTeX 是对的，
-问答页和练习页都显示正常，唯独表格这一处破功。
+**最终处理**
 
-**处理方向（归 D，界面层）**
-
-表格不做精确排版，只在显示时降级成可扫读的纯文本近似：
-
-```
-$\lim_{x\to 0}\frac{\sin 3x}{x}$   ->   lim(x→0)(sin 3x)/(x)
-$\int 2x\,dx$                      ->   ∫ 2x dx
-```
-
-约定：
-
-- 转换函数放视觉层 `app/ui_theme.py`，命名 `plain_math(text) -> str`
-- 🔴 **只改显示，不动数据库里的 `question_text`** —— 存进去仍是 LaTeX，
-  这样以后换到能渲染的控件（详情页、导出）时不用重新清洗数据
-- 要精确排版的地方（确认表单、练习页）仍然走 `st.latex` / `st.markdown`
+- 「最近录入」改为逐行 `st.markdown`，直接渲染数据库里的原始题干，**不降级、不截断**
+  （截断会把 `$...$` 从中间切断，渲染必然失败）
+- `app/ui_theme.py` 的 `plain_math()` 保留：把 LaTeX 转成可扫读纯文本，
+  供以后只能显示纯文本的地方用（导出、通知等）；当前界面已不再调用它
+- 顺带给它的符号表补了 `∭ ∮ ∯ ∇`，避免以后再用到这些命令时又被吃掉反斜杠
+- 🔴 数据库里的 `question_text` 一直是 LaTeX，从未被清洗过
 
 **踩坑提醒**
 
-写转换时有个顺序陷阱：`\lim_{x\to 0}` 必须先整体识别，
+写降级转换时有个顺序陷阱：`\lim_{x\to 0}` 必须先整体识别，
 再做通用的下标转换。否则会先变成 `lim_(x→0)`，就再也匹配不上极限规则了。
 
-**已确认需要的用例**（都是真实数据）
+**已确认的降级用例**（`plain_math()` 自测用，都是真实数据）
 
 ```
 $\lim_{x\to 0}\frac{\sin 3x}{x}$      ->  lim(x→0)(sin 3x)/(x)
 $\lim_{x\to 0}\dfrac{\sin 3x}{x}$     ->  lim(x→0)(sin 3x)/(x)
 计算不定积分 $\int 2x\,dx$              ->  计算不定积分 ∫ 2x dx
 $y' + y = 0$ 的通解是？                 ->  y' + y = 0 的通解是？
-$\frac{a+b}{c}+\sqrt{x^2+1}$          ->  (a+b)/(c)+(x^2+1)
+$\frac{a+b}{c}+\sqrt{x^2+1}$          ->  (a+b)/(c)+√(x^2+1)
+$\oint_L (x+y)\,dx$                   ->  ∮_L (x+y) dx
 ```
 
-**状态**：✅ 已解决（V-批次：界面收尾）。`app/ui_theme.py` 新增 `plain_math()`，
-`_recent_intake()` 用它对题干做展示降级（截断 60 字），数据库里的 `question_text`
-仍然是 LaTeX。实现时按「先整体识别 `\lim_{x\to 0}`，再处理分式/根号、最后才做
-通用上下标」的顺序写，上面五个用例都已验证；根号保留 `√(...)` 形式（去掉符号会把
-数学含义改掉）。`docs/limitations.md` 里不必记 —— 这属于显示缺陷，不是能力缺失。
+**状态**：✅ 已解决（两轮）。第一轮加 `plain_math()` 解决 dataframe 纯文本显示；
+第二轮把「最近录入」改成逐行 markdown 直接渲染，去掉降级与截断，
+同时修掉 `\oint` 被吃掉反斜杠的问题。数据库内容始终是 LaTeX，未做任何清洗。

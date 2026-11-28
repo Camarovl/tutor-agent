@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -44,6 +45,9 @@ MASTERY_COLUMNS = [
     "mastery",
     "status",
 ]
+
+#: 完全没有可用题目时返回给界面的话术（只描述现状与下一步，不带技术细节）
+_NO_PRACTICE_QUESTIONS = "题库暂时没有可用的题目，可以先录入错题，系统会按薄弱知识点出题"
 
 
 def mastery_table() -> pd.DataFrame:
@@ -104,10 +108,13 @@ def summary_text() -> dict:
 def build_practice_session(count: int = 3) -> tuple[list[dict], str]:
     """按薄弱知识点从本地题库选一组题（不调用模型）。
 
+    返回的第二个值是给用户看的「来源说明」：只描述题目从哪来，不含文件名、
+    命令、内部进度术语；题目被跳过的技术原因打到 stderr，不进入界面字符串。
+
     选池规则：
       1. 只保留 kp_ids 都能在数据库里找到的题，避免练完写 practice_log 时外键失败；
       2. 按「命中薄弱知识点的个数」降序，同分按题目 id 稳定排序；
-      3. 题库不够 count 题就返回现有的，并在来源说明里写清楚 —— 不假装有生成能力。
+      3. 题库不够 count 题就返回现有的，并说明「题库暂时只有这些」。
     """
     count = int(count)
     if count <= 0:
@@ -117,24 +124,42 @@ def build_practice_session(count: int = 3) -> tuple[list[dict], str]:
     try:
         bank = json.loads(bank_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return [], f"题库读取失败：{type(exc).__name__}: {exc}"
+        print(
+            f"[profile] 练习题库读取失败：{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return [], _NO_PRACTICE_QUESTIONS
     if not isinstance(bank, list) or not bank:
-        return [], "题库为空，暂无题可练"
+        return [], _NO_PRACTICE_QUESTIONS
 
     existing = {row["id"] for row in db.list_kps()}
     valid: list[dict] = []
+    skipped: list[str] = []
     for item in bank:
         if not isinstance(item, dict) or not item.get("id"):
+            skipped.append("缺少题目 id")
             continue
         kp_ids = item.get("kp_ids")
         if not isinstance(kp_ids, list) or not kp_ids:
+            skipped.append(f"{item.get('id')}: 缺少 kp_ids")
             continue
-        if not all(isinstance(kp_id, str) and kp_id in existing for kp_id in kp_ids):
+        missing = [
+            kp_id
+            for kp_id in kp_ids
+            if not isinstance(kp_id, str) or kp_id not in existing
+        ]
+        if missing:
+            skipped.append(f"{item.get('id')}: kp_ids 不在库中 {missing}")
             continue
         valid.append(item)
 
+    if skipped:
+        print(
+            "[profile] 练习题库跳过不可用题目：" + "；".join(skipped[:5]),
+            file=sys.stderr,
+        )
     if not valid:
-        return [], "题库里的题目没有可用的知识点（可能还没跑 seed_data.py）"
+        return [], _NO_PRACTICE_QUESTIONS
 
     weak_ids = {row["kp_id"] for row in weak_points(count)}
 
@@ -143,13 +168,13 @@ def build_practice_session(count: int = 3) -> tuple[list[dict], str]:
 
     ranked = sorted(valid, key=lambda item: (-weak_hits(item), str(item["id"])))
     chosen = [dict(item) for item in ranked[:count]]
-    note = (
-        "本次来自薄弱知识点（题库）"
-        if any(weak_hits(item) > 0 for item in chosen)
-        else "本次来自题库（薄弱点覆盖不足）"
-    )
+
     if len(chosen) < count:
-        note += f"；题库只有 {len(chosen)} 题，未接入生成"
+        note = f"本次生成了 {len(chosen)} 道（题库暂时只有这些）"
+    elif any(weak_hits(item) > 0 for item in chosen):
+        note = "本次来自薄弱知识点"
+    else:
+        note = "本次来自题库"
     return chosen, note
 
 

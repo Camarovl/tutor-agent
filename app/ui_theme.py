@@ -559,6 +559,29 @@ def _replace_one_arg(text: str, command: str, render) -> str:
     return "".join(out)
 
 
+def clip_math(text: str, limit: int = 160) -> str:
+    """按字符数截断，但**绝不在 $...$ 公式内部下刀**。
+
+    表格能渲染 KaTeX 之后，题干要按原文显示；只有过长的才截断。直接切前 N 个
+    字符会把 `$...$` 切成两半、渲染失败，所以这里先看截断点是否落在公式内：
+      · 不在公式内   → 直接截断 + 省略号
+      · 落在公式内   → 往后找到闭合的 `$` 再截断
+      · 一路找不到   → 不截断（宁可行长一点，也不要渲染出一堆源码）
+    """
+    source = (text or "").strip()
+    if limit <= 0 or len(source) <= limit:
+        return source
+
+    head = source[:limit]
+    if head.count("$") % 2 == 0:
+        return head.rstrip() + "…"
+
+    close = source.find("$", limit)
+    if close == -1:
+        return source
+    return source[: close + 1].rstrip() + "…"
+
+
 def plain_math(text: str) -> str:
     r"""把 LaTeX 片段降级成纯文本，只用于表格等不渲染公式的位置。
 

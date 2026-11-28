@@ -450,10 +450,20 @@ def commit(draft, image_path: str | None = None) -> int:
 # ============================================================
 # ④ 针对性练习
 # ============================================================
-def build_practice_session(count: int = 3):
-    """按薄弱点出题，返回 (题目列表, 来源说明)。真实现归 C₂。"""
+def build_practice_session(count: int = 3, exclude_ids: list[str] | None = None):
+    """按薄弱点出题，返回 (题目列表, 来源说明)。真实现归 C₂。
+
+    exclude_ids：上一轮做过的题目 id，选池时优先给新题。
+    ⚠️ 门面必须把参数转发给真实现 —— 只传 count 会丢掉轮转能力，
+       界面看起来就是「点两次拿到同一批题」。
+    """
     real = _real("app.profile", "build_practice_session")
     if real is not None:
+        if exclude_ids:
+            try:
+                return real(count, exclude_ids=exclude_ids)
+            except TypeError:  # 真实现还是旧签名时退回，别让页面崩
+                return real(count)
         return real(count)
     return _STUB_PRACTICE_ITEMS[: max(1, int(count))], "本次来自薄弱知识点"
 

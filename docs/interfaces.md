@@ -130,6 +130,25 @@ C₂ 和 D 都依赖这一行，**改列名等于改接口**，必须按文件�
 配置来源：环境变量 `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL`（三项必填，无默认值）
 可选：`LLM_TIMEOUT=120` / `LLM_MAX_TOKENS=4000` / `LLM_TEMPERATURE=0.0`
 
+### 异常与日志约定
+
+| 约定 | 说明 |
+|---|---|
+| **异常 message 面向用户** | `LLMError` 的 message 会原样显示在界面上，必须是一句人话：说清「哪里不行 / 怎么办」。不得出现环境变量名、文件名、命令行、`token` / 推理等术语。 |
+| **技术细节走 stderr** | 缺失配置项、`finish_reason`、reasoning token 数、底层异常，一律 `print(..., file=sys.stderr)`，前缀 `[llm_client]`，不放进异常。 |
+| **每次调用都记账** | 每一次实际发出的模型请求都写一行 `llm_log`，**包括校验未通过后重试的那几次**。成功 `success=True`，失败 `success=False`；`retried` 记第几次重试（首次为 0）。最终放弃时不再补记。 |
+| **分类异常** | `VisionUnsupported(LLMError)`：模型不接受图片输入，上层据此与网络故障分开降级。 |
+
+已定的用户可见文案：
+
+| 场景 | message |
+|---|---|
+| 未配置密钥 | 模型服务尚未配置，暂时无法回答 |
+| 返回空内容 | 模型这次没有给出内容，请重试或换个问法 |
+| 网络 / 鉴权 / 限流失败 | 模型服务暂时不可用，请稍后重试 |
+| 重试后仍不合规 | 模型返回的内容不符合要求，已降级为人工填写 |
+| 模型不支持图片 | 当前模型不接受图片输入，请改用手输题干 |
+
 ---
 
 ## 四、问答 — `app/qa.py`　维护人：B
@@ -153,6 +172,10 @@ C₂ 和 D 都依赖这一行，**改列名等于改接口**，必须按文件�
 `IntakeDraft` 字段：`question_text / student_answer / correct_answer /
 solution_steps / knowledge_ids / new_concepts / difficulty / error_type /
 confidence / source / degraded / note`
+
+🔴 `commit()` 抛 `ValueError` 时，message 必须是**可直接展示给用户**的业务原因
+（例：「这道题还没有关联到知识点，请在「涉及知识点」里至少选一个。」），
+不得包含命令行、文件名、环境变量名；技术细节写 stderr。
 
 `degraded=True` 表示模型没成功，界面要显示空表单让人手工填（主流程不断）。
 

@@ -37,6 +37,7 @@
 | `insert_wrong_question(data, image_path=None) -> int` | 写入错题及其知识点关联。⚠️ 只用于**手工录入**（没有题号，允许重复）；从练习错题回流请用下面的 upsert |
 | `recent_wrong_questions(limit=20) -> list[dict]` | 最近录入的错题 |
 | `wrong_question_count() -> int` | 错题总数 |
+| `delete_wrong_question(wq_id) -> bool` | 删除一条错题及其知识点关联（`wq_kp` 走 `ON DELETE CASCADE`）；不存在的 id 返回 `False`（幂等，不抛异常）。🔴 不删除知识点本身 |
 | `log_practice(kp_id, is_correct, question_ref=None, difficulty=None, duration_sec=None)` | 写练习记录 |
 | `mastery_rows() -> list[dict]` | 掌握度聚合行，11 列（见第七节）。系数与分级已在 SQL 里算好 |
 | `llm_usage() -> dict` | 累计调用次数与 token 用量：`{"calls": int, "tokens": int}`。空表返回零值 |

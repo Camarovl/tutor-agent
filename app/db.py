@@ -343,6 +343,24 @@ def wrong_question_count() -> int:
         return int(conn.execute("SELECT COUNT(*) FROM wrong_question").fetchone()[0])
 
 
+def delete_wrong_question(wq_id: int) -> bool:
+    """删除一条错题及其知识点关联，返回是否真的删掉了。
+
+    wq_kp.wq_id 上带 ON DELETE CASCADE，所以一条 DELETE 就够，
+    关联行由 SQLite 自动清掉，不会留下孤儿行。
+    连接在 get_conn() 里已经开了 PRAGMA foreign_keys，
+    级联才会真正生效。
+
+    幂等：id 不存在时返回 False，不抛异常。
+
+    🔴 不删 knowledge_point：知识点可能还被别的错题引用，
+       删错题不等于删知识点。
+    """
+    with _tx() as conn:
+        cur = conn.execute("DELETE FROM wrong_question WHERE id = ?", (wq_id,))
+        return cur.rowcount > 0
+
+
 # ============================================================
 # 练习记录
 # ============================================================

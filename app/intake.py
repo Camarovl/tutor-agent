@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -89,6 +90,14 @@ class IntakeDraft:
     #: 扩展字段（契约之外，界面目前不读）：学生答案与参考答案看起来一致时置 True。
     #: 作用有两个：commit() 用它拒绝入库；界面将来可以用它隐藏「确认入库」按钮。
     looks_correct: bool = False
+
+
+def _warn(detail: str) -> None:
+    """技术细节出口：只写 stderr，不进异常 message、也不进界面备注。"""
+    try:
+        print(f"[intake] {detail}", file=sys.stderr)
+    except Exception:  # pragma: no cover —— stderr 不可用时不影响主流程
+        pass
 
 
 def _degraded(reason: str, source: str = "text", *, looks_correct: bool = False) -> IntakeDraft:
@@ -404,7 +413,7 @@ def analyze_text(
         )
         data = llm_client.extract_json(result.text)
         if data is None:
-            return _degraded("模型返回的内容里没有可解析的 JSON，请手工填写。", source="text")
+            return _degraded("这次没能识别出内容，请手工填写。", source="text")
         return _draft_from_data(
             data,
             question_text=text,
@@ -413,9 +422,11 @@ def analyze_text(
             source="text",
         )
     except llm_client.LLMError as exc:
-        return _degraded(f"模型没能完成识别：{exc}", source="text")
+        # exc 的 message 已经是给用户看的人话；技术细节在 llm_client 里已写 stderr
+        return _degraded(str(exc), source="text")
     except Exception as exc:  # noqa: BLE001 —— 界面没有 try，任何异常都会白屏
-        return _degraded(f"识别过程出错（{type(exc).__name__}）：{exc}", source="text")
+        _warn(f"识别过程出错：{type(exc).__name__}: {exc}")
+        return _degraded("这次没能识别出来，请手工填写。", source="text")
 
 
 # ============================================================
@@ -445,7 +456,7 @@ def analyze_image(image_bytes: bytes, extra_note: str = "") -> IntakeDraft:
         data = llm_client.extract_json(result.text)
         if data is None:
             return _degraded(
-                "图片识别结果里没有可解析的 JSON，请核对后手输。",
+                "这次没能识别出内容，请核对后手输。",
                 source="image",
             )
         return _draft_from_data(
@@ -455,16 +466,17 @@ def analyze_image(image_bytes: bytes, extra_note: str = "") -> IntakeDraft:
             correct_answer="",
             source="image",
         )
-    except llm_client.VisionUnsupported as exc:
+    except llm_client.VisionUnsupported:
         # 模型不支持图片：这是可预期的情况，不是故障（见 docs/limitations.md 第 13 条）
         return _degraded(
-            "当前模型不支持图片识别，请改用手输题干（或换支持多模态的模型）。",
+            "当前模型不接受图片输入，请改用手输题干。",
             source="image",
         )
     except llm_client.LLMError as exc:
-        return _degraded(f"图片识别失败：{exc}", source="image")
+        return _degraded(str(exc), source="image")
     except Exception as exc:  # noqa: BLE001
-        return _degraded(f"图片识别出错（{type(exc).__name__}）：{exc}", source="image")
+        _warn(f"图片识别出错：{type(exc).__name__}: {exc}")
+        return _degraded("这次没能识别出来，请改用手输。", source="image")
 
 
 # ============================================================
@@ -538,21 +550,8 @@ def commit(draft: Any, image_path: str | None = None) -> int:
 
     kp_ids = _resolve_kp_ids(draft)
     if not kp_ids:
-        # 分两种情况给话术：库是空的（用户无从选起） vs 库里有但没选（用户漏勾）
-        try:
-            existing = knowledge.all_knowledge_points()
-        except Exception:  # noqa: BLE001 —— 查库失败不该影响报错本身
-            existing = []
-        if not existing:
-            raise ValueError(
-                "数据库里还没有任何知识点，这道题没法挂靠。两个办法：\n"
-                "① 先运行 python seed_data.py 建库并灌入演示数据；\n"
-                "② 或重新点「识别并归类」，让模型建议一个知识点（提交时会自动创建）。"
-            )
         raise ValueError(
-            f"这道题还没有挂到任何知识点上（库里现有 {len(existing)} 个可选）："
-            "请在「涉及知识点」里至少勾选一个。"
-            "知识点是掌握度的统计维度，没挂上的错题不会参与任何统计。"
+            "这道题还没有关联到知识点，请在「涉及知识点」里至少选一个。"
         )
 
     data = {

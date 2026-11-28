@@ -77,12 +77,24 @@ def is_configured() -> bool:
     return not missing_config_keys()
 
 
+def _warn(detail: str) -> None:
+    """技术细节的唯一出口：只写 stderr，绝不进异常 message。
+
+    🔴 为什么要分开：异常 message 会原样显示在界面上给用户看，
+       环境变量名、文件名、token 数量这些词对用户毫无意义。
+       排障需要的细节留在 stderr（终端 / 日志）里给开发者看。
+    """
+    try:
+        print(f"[llm_client] {detail}", file=sys.stderr)
+    except Exception:  # pragma: no cover —— stderr 不可用时也不能影响主流程
+        pass
+
+
 def _require_configured() -> None:
     missing = missing_config_keys()
     if missing:
-        raise LLMError(
-            "缺少模型服务配置：" + ", ".join(missing) + "。请检查项目根目录的 .env"
-        )
+        _warn("缺少配置项：" + ", ".join(missing) + "（请检查项目根目录的 .env）")
+        raise LLMError("模型服务尚未配置，暂时无法回答")
 
 
 _dotenv_status = "unknown"
@@ -192,11 +204,11 @@ def _guard_messages(messages: list[dict]) -> None:
     开场白只做界面渲染、不进历史，这里做最后一道拦截。
     """
     if not messages:
-        raise LLMError("messages 不能为空")
+        _warn("messages 为空")
+        raise LLMError("对话状态异常，请清空对话后重试")
     if messages[0].get("role") == "assistant":
-        raise LLMError(
-            "messages 不能以 assistant 开头（开场白不要写进对话历史）"
-        )
+        _warn("messages 以 assistant 开头（开场白被写进了历史）")
+        raise LLMError("对话状态异常，请清空对话后重试")
 
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.S | re.I)
@@ -252,17 +264,19 @@ def _usage_of(response: Any) -> dict[str, int]:
 
 
 def _empty_content_error(choice: Any, usage: dict[str, int]) -> LLMError:
-    """把「返回空内容」翻译成人能看懂的提示。"""
+    """返回空内容时的用户提示；诊断细节写 stderr，不进 message。"""
     finish = getattr(choice, "finish_reason", None)
     reasoning = usage.get("reasoning_tokens", 0)
     completion = usage.get("completion_tokens", 0)
     if finish == "length" and reasoning and completion and reasoning >= 0.9 * completion:
-        return LLMError(
-            "模型返回空内容：token 全花在内部推理上了"
-            f"（completion={completion}, reasoning={reasoning}）。"
-            "请调大 LLM_MAX_TOKENS，或换非思考模型。"
+        _warn(
+            f"返回空内容：finish_reason={finish}, "
+            f"reasoning_tokens={reasoning}/{completion}"
+            "（token 基本耗在内部推理上，考虑调大 LLM_MAX_TOKENS 或换非思考模型）"
         )
-    return LLMError(f"模型返回空内容（finish_reason={finish}）")
+    else:
+        _warn(f"返回空内容：finish_reason={finish}, completion_tokens={completion}")
+    return LLMError("模型这次没有给出内容，请重试或换个问法")
 
 
 def _call_once(
@@ -284,10 +298,12 @@ def _call_once(
     try:
         response = client.chat.completions.create(**kwargs)
     except Exception as exc:  # 网络、鉴权、限流都归到这里
-        raise LLMError(f"模型调用失败（{purpose}）：{exc}") from exc
+        _warn(f"调用失败（purpose={purpose}）：{type(exc).__name__}: {exc}")
+        raise LLMError("模型服务暂时不可用，请稍后重试") from exc
 
     if not getattr(response, "choices", None):
-        raise LLMError(f"模型没有返回任何候选结果（{purpose}）")
+        _warn(f"没有候选结果（purpose={purpose}）")
+        raise LLMError("模型这次没有返回结果，请稍后重试")
 
     choice = response.choices[0]
     text = (choice.message.content or "") if getattr(choice, "message", None) else ""
@@ -323,81 +339,77 @@ def chat(
     attempts = max(0, int(max_retry))
     last_problem = ""
 
-    try:
-        for attempt in range(attempts + 1):
+    for attempt in range(attempts + 1):
+        try:
             text, usage, choice, response = _call_once(
                 convo, purpose=purpose, json_mode=json_mode
             )
+        except LLMError:
+            # 请求已经发出去了，虽然结果是异常，这次尝试也要记一笔成本
+            _log_call(purpose, success=False, retried=attempt)
+            raise
 
-            if not text.strip():
-                raise _empty_content_error(choice, usage)
+        tokens = {
+            "prompt_tokens": usage["prompt_tokens"],
+            "completion_tokens": usage["completion_tokens"],
+        }
 
-            needs_check = json_mode or validator is not None
-            if not needs_check:
-                _log_call(
-                    purpose,
-                    prompt_tokens=usage["prompt_tokens"],
-                    completion_tokens=usage["completion_tokens"],
-                    retried=attempt,
-                    success=True,
-                )
-                return LLMResult(
-                    text=text,
-                    retried=attempt > 0,
-                    success=True,
-                    raw=response,
-                    **usage,
-                )
+        if not text.strip():
+            _log_call(purpose, success=False, retried=attempt, **tokens)
+            raise _empty_content_error(choice, usage)
 
-            data = extract_json(text)
-            problem: str | None
-            if data is None:
-                problem = "返回内容里没有可解析的 JSON 对象"
-            elif validator is not None:
-                problem = validator(data)
-            else:
-                problem = None
+        needs_check = json_mode or validator is not None
+        if not needs_check:
+            _log_call(purpose, success=True, retried=attempt, **tokens)
+            return LLMResult(
+                text=text,
+                retried=attempt > 0,
+                success=True,
+                raw=response,
+                **usage,
+            )
 
-            if problem is None:
-                _log_call(
-                    purpose,
-                    prompt_tokens=usage["prompt_tokens"],
-                    completion_tokens=usage["completion_tokens"],
-                    retried=attempt,
-                    success=True,
-                )
-                return LLMResult(
-                    text=text,
-                    retried=attempt > 0,
-                    success=True,
-                    raw=response,
-                    **usage,
-                )
+        data = extract_json(text)
+        problem: str | None
+        if data is None:
+            problem = "返回内容里没有可解析的 JSON 对象"
+        elif validator is not None:
+            problem = validator(data)
+        else:
+            problem = None
 
-            last_problem = problem
-            if attempt >= attempts:
-                break
+        if problem is None:
+            _log_call(purpose, success=True, retried=attempt, **tokens)
+            return LLMResult(
+                text=text,
+                retried=attempt > 0,
+                success=True,
+                raw=response,
+                **usage,
+            )
 
-            # 把失败原因回喂，比盲目重问成功率高得多
-            convo = convo + [
-                {"role": "assistant", "content": text},
-                {
-                    "role": "user",
-                    "content": (
-                        f"上面的输出不合格：{problem}。"
-                        "请只输出修正后的 JSON 对象，不要任何解释文字。"
-                        + (f"\n必须符合的结构：{schema_hint}" if schema_hint else "")
-                    ),
-                },
-            ]
-    except LLMError:
-        _log_call(purpose, success=False)
-        raise
+        # 校验没过也是一次真实请求，token 照样花了，必须记账
+        _log_call(purpose, success=False, retried=attempt, **tokens)
+        _warn(f"第 {attempt + 1} 次输出未通过校验（purpose={purpose}）：{problem}")
+        last_problem = problem
+        if attempt >= attempts:
+            break
 
-    _log_call(purpose, success=False)
-    raise LLMError(
-        f"模型输出连续 {attempts + 1} 次未通过校验（{purpose}）：{last_problem}"
-    )
+        # 把失败原因回喂，比盲目重问成功率高得多
+        convo = convo + [
+            {"role": "assistant", "content": text},
+            {
+                "role": "user",
+                "content": (
+                    f"上面的输出不合格：{problem}。"
+                    "请只输出修正后的 JSON 对象，不要任何解释文字。"
+                    + (f"\n必须符合的结构：{schema_hint}" if schema_hint else "")
+                ),
+            },
+        ]
+
+    _warn(f"连续 {attempts + 1} 次未通过校验（purpose={purpose}）：{last_problem}")
+    raise LLMError("模型返回的内容不符合要求，已降级为人工填写")
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +479,8 @@ def vision(
 
     items = [item for item in (images or []) if item]
     if not items:
-        raise LLMError("vision() 至少需要一张图片")
+        _warn("vision() 没有收到任何图片字节")
+        raise LLMError("没有收到图片内容，请重新上传")
 
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
     for image in items:
@@ -492,16 +505,18 @@ def vision(
     try:
         response = client.chat.completions.create(**kwargs)
     except Exception as exc:
-        message = str(exc)
-        if _looks_like_vision_unsupported(message):
+        detail = str(exc)
+        _warn(f"图片调用失败（purpose={purpose}）：{type(exc).__name__}: {detail}")
+        if _looks_like_vision_unsupported(detail):
             _log_call(purpose, success=False)
-            raise VisionUnsupported(f"模型不支持图片输入：{message}") from exc
+            raise VisionUnsupported("当前模型不支持图片识别，请改用手输题干") from exc
         _log_call(purpose, success=False)
-        raise LLMError(f"图片调用失败（{purpose}）：{message}") from exc
+        raise LLMError("图片识别暂时不可用，请改用手输题干") from exc
 
     if not getattr(response, "choices", None):
+        _warn(f"图片调用没有候选结果（purpose={purpose}）")
         _log_call(purpose, success=False)
-        raise LLMError(f"模型没有返回任何候选结果（{purpose}）")
+        raise LLMError("这次没有识别出内容，请重试或改用手输")
 
     choice = response.choices[0]
     text = (choice.message.content or "") if getattr(choice, "message", None) else ""
@@ -517,8 +532,9 @@ def vision(
         if problem is None and validator is not None:
             problem = validator(data)
         if problem:
+            _warn(f"图片识别结果未通过校验（purpose={purpose}）：{problem}")
             _log_call(purpose, success=False)
-            raise LLMError(f"图片识别结果未通过校验（{purpose}）：{problem}")
+            raise LLMError("识别结果不符合要求，请核对后手输")
 
     _log_call(
         purpose,

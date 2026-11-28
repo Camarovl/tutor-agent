@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -142,6 +143,16 @@ def _practice_note(note: str) -> str:
     return text
 
 
+def _practice_signature(items: list[dict]) -> str:
+    """一轮练习的指纹：题目 id 顺序拼起来取哈希。
+
+    用途只有一个 —— 判断「当前这组题」是否已经判过分。
+    重新生成练习会换一批 id，指纹自然变化，所以不会误拦新一轮。
+    """
+    raw = "|".join(str(item.get("id", "")) for item in items or [])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
 def _kp_options() -> tuple[list[str], dict[str, str]]:
     """知识点下拉框的选项：只允许选库里已有的，不许自由输入。
 
@@ -167,6 +178,7 @@ def _init_state() -> None:
         "practice_items": None,  # ④ 页当前这组题
         "practice_note": "",  # ④ 页的题目来源说明
         "practice_result": None,  # ④ 页最近一次判分结果
+        "practice_graded": None,  # 本轮题目的签名：判过分就不再给提交按钮
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -772,6 +784,7 @@ def _tab_practice() -> None:
         st.session_state.practice_items = items
         st.session_state.practice_note = note
         st.session_state.practice_result = None
+        st.session_state.practice_graded = None  # 新一轮，重新允许提交
         st.toast(f"已生成 {len(items)} 道题", icon="📐")
 
     items = st.session_state.practice_items
@@ -807,7 +820,13 @@ def _tab_practice() -> None:
                 f"难度：{backend.DIFFICULTY_LABELS.get(item.get('difficulty'), item.get('difficulty'))}"
             )
 
-    if st.button("提交并判分"):
+    # 🔴 同一轮只允许判分一次：record_result 会直接写 practice_log，
+    #    重复点会让练习次数翻倍、掌握度被抬高、错题重复回流。
+    signature = _practice_signature(items)
+    already_graded = st.session_state.get("practice_graded") == signature
+    if already_graded:
+        st.info("本轮已判分，如需重做请重新生成练习")
+    elif st.button("提交并判分"):
         # 未作答不判分：单选/填空都可能有默认值，直接提交等于拿默认值当答案，
         # 会产出假成绩，也会把假作答写进练习记录、污染掌握度。
         unanswered = [
@@ -833,6 +852,7 @@ def _tab_practice() -> None:
             return
 
         st.session_state.practice_result = results
+        st.session_state.practice_graded = signature  # 标记这一轮已经判过
         st.toast("判分完成", icon="🎯")
 
     results = st.session_state.practice_result

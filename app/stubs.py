@@ -182,6 +182,7 @@ _FACADE = {
     "all_knowledge_points": ("app.knowledge", "all_knowledge_points"),
     "chapter_candidates": ("app.knowledge", "chapter_candidates"),
     "recent_wrong_questions": ("app.db", "recent_wrong_questions"),
+    "delete_wrong_question": ("app.db", "delete_wrong_question"),
     "wrong_question_count": ("app.db", "wrong_question_count"),
 }
 
@@ -571,6 +572,18 @@ def recent_wrong_questions(limit: int = 20) -> list[dict]:
     """最近录入的错题。C₁ 的 db.py 已实现，这里只是转发。"""
     real = _real("app.db", "recent_wrong_questions")
     return real(limit) if real is not None else []
+
+
+def delete_wrong_question(wq_id: int) -> bool:
+    """删除一道错题（连带它的知识点挂载，不动知识点本身）。
+
+    真实现归 C₁（app/db.py）。桩返回 False —— 不假装删掉了，
+    否则界面会提示"已删除"但数据还在，比报错更糟。
+    """
+    real = _real("app.db", "delete_wrong_question")
+    if real is not None:
+        return real(wq_id)
+    return False
 
 
 def wrong_question_count() -> int:

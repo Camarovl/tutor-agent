@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import time
@@ -142,6 +143,16 @@ def _practice_note(note: str) -> str:
     return text
 
 
+def _practice_signature(items: list[dict]) -> str:
+    """一轮练习的指纹：题目 id 顺序拼起来取哈希。
+
+    用途只有一个 —— 判断「当前这组题」是否已经判过分。
+    重新生成练习会换一批 id，指纹自然变化，所以不会误拦新一轮。
+    """
+    raw = "|".join(str(item.get("id", "")) for item in items or [])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
 def _kp_options() -> tuple[list[str], dict[str, str]]:
     """知识点下拉框的选项：只允许选库里已有的，不许自由输入。
 
@@ -167,6 +178,7 @@ def _init_state() -> None:
         "practice_items": None,  # ④ 页当前这组题
         "practice_note": "",  # ④ 页的题目来源说明
         "practice_result": None,  # ④ 页最近一次判分结果
+        "practice_graded": None,  # 本轮题目的签名：判过分就不再给提交按钮
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -611,20 +623,45 @@ def _recent_intake() -> None:
     if not rows:
         st.caption("还没有录入过错题。")
         return
-    table = pd.DataFrame(
-        [
-            {
-                "编号": row.get("id"),
-                # 🔴 表格不跑 KaTeX，直接显示 LaTeX 源码很难读 —— 只做展示降级，不动数据
-                "题干": ui_theme.plain_math(row.get("question_text"))[:60],
-                "知识点": "、".join(k["name"] for k in row.get("knowledge_points", [])) or "—",
-                "错因": backend.ERROR_TYPE_LABELS.get(row.get("error_type"), row.get("error_type") or "—"),
-                "时间": row.get("created_at"),
-            }
-            for row in rows
-        ]
-    )
-    st.dataframe(table, hide_index=True)
+    # 逐行渲染而不是 st.dataframe：表格里放不了按钮，而删错题必须每行一个入口。
+    for row in rows:
+        wq_id = row.get("id")
+        # 🔴 表格/文本不跑 KaTeX，直接显示 LaTeX 源码很难读 —— 只做展示降级，不动数据
+        stem = ui_theme.plain_math(row.get("question_text"))[:60]
+        names = "、".join(k["name"] for k in row.get("knowledge_points", [])) or "—"
+        error_label = backend.ERROR_TYPE_LABELS.get(row.get("error_type"), row.get("error_type") or "—")
+        info_col, action_col = st.columns([0.82, 0.18], vertical_alignment="center")
+        with info_col:
+            st.markdown(f"**#{wq_id}**　{stem}")
+            st.caption(f"{names} · {error_label} · {row.get('created_at')}")
+        with action_col:
+            if st.button("删除", key=f"del_{wq_id}"):
+                st.session_state["pending_delete"] = wq_id
+
+    pending = st.session_state.get("pending_delete")
+    if pending is not None:
+        st.warning(f"确认删除错题 #{pending}？删除后不可恢复，知识点本身不受影响。")
+        confirmed = st.checkbox("确认删除", key=f"confirm_delete_{pending}")
+        col_yes, col_no = st.columns(2)
+        if confirmed and col_yes.button("确认删除该题", type="primary", key=f"do_delete_{pending}"):
+            try:
+                deleted = backend.delete_wrong_question(int(pending))
+            except Exception as exc:  # noqa: BLE001 —— 删库失败不该把页面打挂
+                st.error("删除没成功，请稍后重试。" + (f"（{exc}）" if _DEBUG else ""))
+            else:
+                if deleted:
+                    st.session_state["pending_delete"] = None
+                    st.toast("已删除", icon="🗑")
+                    st.rerun()
+                else:
+                    if backend.sources().get("delete_wrong_question") != "real":
+                        # 门面还没接上真实现（C₁ 正在补 db.delete_wrong_question）
+                        st.info("当前是示例模式，不会真的删除数据。")
+                    else:
+                        st.error("删除没成功：这道题可能已经被删掉了，刷新页面再看。")
+        if col_no.button("取消", key=f"cancel_delete_{pending}"):
+            st.session_state["pending_delete"] = None
+            st.rerun()
 
 
 # ============================================================
@@ -772,6 +809,7 @@ def _tab_practice() -> None:
         st.session_state.practice_items = items
         st.session_state.practice_note = note
         st.session_state.practice_result = None
+        st.session_state.practice_graded = None  # 新一轮，重新允许提交
         st.toast(f"已生成 {len(items)} 道题", icon="📐")
 
     items = st.session_state.practice_items
@@ -807,7 +845,13 @@ def _tab_practice() -> None:
                 f"难度：{backend.DIFFICULTY_LABELS.get(item.get('difficulty'), item.get('difficulty'))}"
             )
 
-    if st.button("提交并判分"):
+    # 🔴 同一轮只允许判分一次：record_result 会直接写 practice_log，
+    #    重复点会让练习次数翻倍、掌握度被抬高、错题重复回流。
+    signature = _practice_signature(items)
+    already_graded = st.session_state.get("practice_graded") == signature
+    if already_graded:
+        st.info("本轮已判分，如需重做请重新生成练习")
+    elif st.button("提交并判分"):
         # 未作答不判分：单选/填空都可能有默认值，直接提交等于拿默认值当答案，
         # 会产出假成绩，也会把假作答写进练习记录、污染掌握度。
         unanswered = [
@@ -833,6 +877,7 @@ def _tab_practice() -> None:
             return
 
         st.session_state.practice_result = results
+        st.session_state.practice_graded = signature  # 标记这一轮已经判过
         st.toast("判分完成", icon="🎯")
 
     results = st.session_state.practice_result
